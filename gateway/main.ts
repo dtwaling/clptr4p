@@ -73,13 +73,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-// @ts-ignore - bypassing strict any check on request parameter for standard MCP handler
-server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+// Use explicit typing to satisfy Deno's strict checks
+server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name: string; arguments?: any } }) => {
   try {
-    assertNoSecretFields(request.params.arguments);
+    const args = request.params.arguments || {};
+    assertNoSecretFields(args);
 
     if (request.params.name === "context_request") {
-      const ctxReq = request.params.arguments.request;
+      const ctxReq = args.request;
       
       const validation = validateContextRequest(ctxReq);
       if (!validation.valid) {
