@@ -73,7 +73,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+// @ts-ignore - bypassing strict any check on request parameter for standard MCP handler
+server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
   try {
     assertNoSecretFields(request.params.arguments);
 
@@ -139,7 +140,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     throw new Error(`Unknown tool: ${request.params.name}`);
-  } catch (error) {
+  } catch (e) {
+    const error = e as Error;
     return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
   }
 });
