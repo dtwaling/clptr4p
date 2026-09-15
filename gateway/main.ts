@@ -9,7 +9,6 @@ import {
   issueScopedBundle,
   writeReceipt,
   validateContextRequest,
-  validateMemoryUpdateProposal,
   assertNoSecretFields
 } from "../context-layer-reference/context-layer-reference.mjs";
 
@@ -18,26 +17,18 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
-// Hardcoded deny-by-default policy for scaffold
+// Hardcoded deny-by-default policy input (matches valid-exchange.json policy shape)
 const DEFAULT_POLICY = {
-  spec_version: "context-layer/0.2-draft",
-  type: "PolicyDecision",
   id: "urn:cl:policy:default-deny",
-  created_at: new Date().toISOString(),
-  issuer: { id: "did:local:clptr4p-gateway" },
-  request_ref: "urn:cl:req:none",
-  decision: "deny",
-  reason_codes: ["default_deny_active"],
-  granted_selectors: [],
-  granted_actions: [],
+  version: "default-deny/1",
+  issuer: "urn:cl:policy-engine:local",
+  allowed_purpose_codes: [],
+  allowed_selectors: [],
   denied_selectors: ["*"],
-  denied_actions: ["*"],
-  policy_snapshot: "deny-all",
-  transform_requirements: [],
-  retention: "none",
-  onward_disclosure: "deny",
-  receipt_requirement: "always",
-  expires_at: new Date(Date.now() + 3600000).toISOString()
+  allowed_actions: [],
+  max_retention_seconds: 0,
+  allow_onward_disclosure: false,
+  transform_requirements: []
 };
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -88,47 +79,63 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (request.params.name === "context_request") {
       const ctxReq = request.params.arguments.request;
-      validateContextRequest(ctxReq);
+      
+      const validation = validateContextRequest(ctxReq);
+      if (!validation.valid) {
+        return { content: [{ type: "text", text: `Invalid request: ${JSON.stringify(validation.errors)}` }], isError: true };
+      }
+      
       const decision = decideContextRequest(ctxReq, DEFAULT_POLICY);
       
       if (decision.decision === "deny") {
          const receipt = writeReceipt({
            operation: "context.request",
            request: ctxReq,
-           decision: decision
+           decision: decision,
+           actor: "did:local:gateway",
+           issuer: "did:local:gateway",
+           outcome: "denied",
+           started_at: new Date().toISOString(),
+           completed_at: new Date().toISOString(),
+           user_summary: "Request denied by default policy."
          });
          return { content: [{ type: "text", text: JSON.stringify({ decision, receipt }, null, 2) }] };
+      }
+      
+      // Only explicit allow states should proceed to bundle issuance
+      if (decision.decision !== "allow" && decision.decision !== "allow_with_reductions") {
+         return { content: [{ type: "text", text: `Unhandled decision state: ${decision.decision}` }], isError: true };
       }
       
       const bundle = issueScopedBundle({
         request: ctxReq,
         decision: decision,
         claims: [],
-        issuer: "did:local:clptr4p-gateway"
+        issuer: "did:local:gateway"
       });
+      
       const receipt = writeReceipt({
         operation: "bundle.issue",
         request: ctxReq,
         decision: decision,
-        bundle: bundle
+        bundle: bundle,
+        actor: "did:local:gateway",
+        issuer: "did:local:gateway",
+        outcome: "success",
+        started_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+        user_summary: "Issued scoped bundle."
       });
+      
       return { content: [{ type: "text", text: JSON.stringify({ bundle, receipt }, null, 2) }] };
     }
 
     if (request.params.name === "memory_propose") {
-      const proposal = request.params.arguments.proposal;
-      validateMemoryUpdateProposal(proposal);
-      const receipt = writeReceipt({
-        operation: "memory.propose",
-        request: { id: "urn:cl:req:none" },
-        decision: DEFAULT_POLICY,
-        outcome: { status: "proposed" }
-      });
-      return { content: [{ type: "text", text: JSON.stringify({ status: "proposed", receipt }, null, 2) }] };
+      return { content: [{ type: "text", text: "Not implemented yet. Requires durable storage and authorization." }], isError: true };
     }
 
     if (request.params.name === "context_act") {
-      return { content: [{ type: "text", text: "Not implemented yet. Requires bundle validation." }] };
+      return { content: [{ type: "text", text: "Not implemented yet. Requires bundle validation." }], isError: true };
     }
 
     throw new Error(`Unknown tool: ${request.params.name}`);
