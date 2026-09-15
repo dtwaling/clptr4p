@@ -1,0 +1,5 @@
+{
+  "tasks": {
+    "start": "deno run --allow-read=.,../context-layer-reference main.ts"
+  }
+}
