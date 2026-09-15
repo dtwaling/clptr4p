@@ -1,7 +1,7 @@
 import { decideContextRequest, issueScopedBundle, writeReceipt } from '../../context-layer-reference/context-layer-reference.mjs';
 import { readFileSync } from 'node:fs';
 
-const exchange = JSON.parse(readFileSync('./valid-exchange.json', 'utf8'));
+const exchange = JSON.parse(readFileSync(new URL('../../context-layer-reference/valid-exchange.json', import.meta.url), 'utf8'));
 
 console.log("-- 1. EVALUATING POLICY --");
 const decision = decideContextRequest(exchange.request, exchange.policy);
