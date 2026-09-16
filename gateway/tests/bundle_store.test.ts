@@ -1,7 +1,7 @@
-import { assertEquals, assertThrows } from "jsr:@std/assert";
-import { BundleStore } from "../bundle_store.ts";
+import { assertEquals, assertRejects } from "jsr:@std/assert";
+import { MemoryBundles } from "../store/lite.ts";
+import { evaluateConsume } from "../store/types.ts";
 
-const T0 = new Date("2026-08-12T14:33:00Z");
 const T_LATER = new Date("2026-08-12T15:00:00Z");
 const T_EXPIRED = new Date("2026-08-12T17:00:00Z");
 
@@ -18,66 +18,72 @@ function fixture(id = "urn:cl:bundle:test1") {
   };
 }
 
-Deno.test("BundleStore: consume succeeds once for a granted action", () => {
-  const store = new BundleStore();
+Deno.test("MemoryBundles: consume succeeds once for a granted action", async () => {
+  const store = new MemoryBundles();
   const f = fixture();
-  store.issue(f.request, f.decision, f.bundle);
+  await store.issue(f.request, f.decision, f.bundle, { id: "r0" });
 
-  const first = store.consume(f.bundle.id, "model.generate_text", T_LATER);
+  const first = await store.consume(f.bundle.id, "model.generate_text", T_LATER);
   assertEquals(first.ok, true);
 
-  const second = store.consume(f.bundle.id, "model.generate_text", T_LATER);
+  const second = await store.consume(f.bundle.id, "model.generate_text", T_LATER);
   assertEquals(second.ok, false);
   if (!second.ok) assertEquals(second.code, "BUNDLE_ALREADY_CONSUMED");
 });
 
-Deno.test("BundleStore: rejects ungranted action without consuming", () => {
-  const store = new BundleStore();
+Deno.test("MemoryBundles: rejects ungranted action without consuming", async () => {
+  const store = new MemoryBundles();
   const f = fixture();
-  store.issue(f.request, f.decision, f.bundle);
+  await store.issue(f.request, f.decision, f.bundle, { id: "r0" });
 
-  const bad = store.consume(f.bundle.id, "email.send", T_LATER);
+  const bad = await store.consume(f.bundle.id, "email.send", T_LATER);
   assertEquals(bad.ok, false);
   if (!bad.ok) assertEquals(bad.code, "ACTION_NOT_GRANTED");
 
-  // Bundle must still be usable for a granted action.
-  const good = store.consume(f.bundle.id, "email.create_draft", T_LATER);
+  const good = await store.consume(f.bundle.id, "email.create_draft", T_LATER);
   assertEquals(good.ok, true);
 });
 
-Deno.test("BundleStore: rejects expired bundle", () => {
-  const store = new BundleStore();
+Deno.test("MemoryBundles: rejects expired bundle", async () => {
+  const store = new MemoryBundles();
   const f = fixture();
-  store.issue(f.request, f.decision, f.bundle);
-
-  const r = store.consume(f.bundle.id, "model.generate_text", T_EXPIRED);
+  await store.issue(f.request, f.decision, f.bundle, { id: "r0" });
+  const r = await store.consume(f.bundle.id, "model.generate_text", T_EXPIRED);
   assertEquals(r.ok, false);
   if (!r.ok) assertEquals(r.code, "BUNDLE_EXPIRED");
 });
 
-Deno.test("BundleStore: unknown bundle id fails closed", () => {
-  const store = new BundleStore();
-  const r = store.consume("urn:cl:bundle:nope", "model.generate_text", T0);
+Deno.test("MemoryBundles: unknown bundle id fails closed", async () => {
+  const r = await new MemoryBundles().consume("urn:cl:bundle:nope", "model.generate_text", T_LATER);
   assertEquals(r.ok, false);
   if (!r.ok) assertEquals(r.code, "BUNDLE_NOT_FOUND");
 });
 
-Deno.test("BundleStore: duplicate issue throws", () => {
-  const store = new BundleStore();
+Deno.test("MemoryBundles: duplicate issue rejects", async () => {
+  const store = new MemoryBundles();
   const f = fixture();
-  store.issue(f.request, f.decision, f.bundle);
-  assertThrows(() => store.issue(f.request, f.decision, f.bundle));
+  await store.issue(f.request, f.decision, f.bundle, { id: "r0" });
+  await assertRejects(() => store.issue(f.request, f.decision, f.bundle, { id: "r1" }));
 });
 
-Deno.test("BundleStore: prune removes expired entries only", () => {
-  const store = new BundleStore();
-  const a = fixture("urn:cl:bundle:a");
-  const b = fixture("urn:cl:bundle:b");
-  b.bundle.expires_at = "2026-08-12T18:00:00Z";
-  store.issue(a.request, a.decision, a.bundle);
-  store.issue(b.request, b.decision, b.bundle);
+Deno.test("evaluateConsume: check order is not-found > consumed > expired > ungranted", () => {
+  const base = fixture();
+  const consumedAndExpired = { ...base, consumed_at: "2026-08-12T15:00:00Z" };
+  const r1 = evaluateConsume(consumedAndExpired, base.bundle.id, "nope", T_EXPIRED);
+  assertEquals(r1.ok === false && r1.code, "BUNDLE_ALREADY_CONSUMED");
 
-  assertEquals(store.prune(T_EXPIRED), 1);
-  assertEquals(store.size, 1);
-  assertEquals(store.get("urn:cl:bundle:b") !== undefined, true);
+  const expiredUngranted = { ...base, consumed_at: null };
+  const r2 = evaluateConsume(expiredUngranted, base.bundle.id, "nope", T_EXPIRED);
+  assertEquals(r2.ok === false && r2.code, "BUNDLE_EXPIRED");
+});
+
+Deno.test("MemoryBundles: receipts emitted on issue and granted consume only", async () => {
+  const seen: unknown[] = [];
+  const store = new MemoryBundles((r) => seen.push(r));
+  const f = fixture();
+  await store.issue(f.request, f.decision, f.bundle, { id: "issue" });
+  await store.consume(f.bundle.id, "email.send", T_LATER, () => ({ id: "never" }));
+  await store.consume(f.bundle.id, "model.generate_text", T_LATER, () => ({ id: "consume" }));
+  await store.consume(f.bundle.id, "model.generate_text", T_LATER, () => ({ id: "never2" }));
+  assertEquals(seen.map((r) => (r as { id: string }).id), ["issue", "consume"]);
 });

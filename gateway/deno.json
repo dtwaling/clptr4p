@@ -1,8 +1,9 @@
 {
   "tasks": {
-    "start": "deno run --allow-read=.,../context-layer-reference --allow-write=../vault/data --allow-env main.ts",
-    "check": "deno check main.ts bundle_store.ts claim_store.ts audit.ts",
+    "start": "deno run --allow-net=127.0.0.1:5433 --allow-read=.,../context-layer-reference --allow-write=../vault/data --allow-env main.ts",
+    "check": "deno check main.ts store/*.ts",
     "test": "deno test --allow-read --allow-write --allow-env tests/",
-    "smoke": "bash tests/smoke.sh"
+    "smoke": "bash tests/smoke.sh",
+    "smoke:pg": "bash tests/smoke_pg.sh"
   }
 }

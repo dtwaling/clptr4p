@@ -3,49 +3,62 @@
 ## Core Principles
 1. **Zero Ambient Access**: No direct vector DB queries. All context flows through the Policy Gateway.
 2. **Purpose-Bound Disclosure**: Agents request context for a specific purpose. Gateway issues a single-use, expiring Scoped Context Bundle.
-3. **Receipts & Proposals**: Every issue/consume writes an append-only receipt. Memory writes are proposals, never direct mutations.
+3. **Receipts & Proposals**: Every issue/consume writes a receipt atomically with the state change. Memory writes are proposals, never direct mutations.
 4. **Fail Closed**: Missing policy -> deny-all. Missing claims -> no bundle. Expired/consumed/ungranted -> rejected.
+5. **Least Privilege at the DB**: the gateway's Postgres role cannot read raw source events or write claims/policies. Enforced by grants, verified by test.
 
-## Components (gateway/)
-- `main.ts` -- MCP server (stdio). Tools: `context_request`, `context_act`, `memory_propose`.
-- `bundle_store.ts` -- in-memory issued-bundle registry; enforces single-use, expiry, capability binding.
-- `claim_store.ts` -- file-backed vault claims surface, keyed by `subject_ref`. Gateway selects requested predicates; policy engine grants.
-- `audit.ts` -- append-only JSONL writer. IO failure throws (no false success).
-- `../context-layer-reference/` -- vendored Sierra Catalina v0.2-draft reference (validators, decide, issue, receipt).
+## Components
+```
+gateway/
+  main.ts            MCP server (stdio). Tools: context_request, context_act, memory_propose
+  store/types.ts     Backend interface + shared consume semantics (evaluateConsume)
+  store/lite.ts      memory bundles, file policy/claims, JSONL audit (zero infra)
+  store/postgres.ts  durable vault backend, least-privilege role
+vault/
+  docker-compose.yml pg16+pgvector, 127.0.0.1:5433, hardened
+  migrations/        001 schema, 002 gateway role grants, 003 seed deny-all policy
+  migrate.ts         idempotent runner (admin role)
+  verify_rbac.ts     asserts the gateway role boundary against the live DB
+  psql.ts            stdin SQL as admin (ops/tests)
+context-layer-reference/  vendored Sierra Catalina v0.2-draft (validators, decide, issue, receipt)
+```
 
-## Runtime config (env)
-- `CLPTR4P_POLICY_FILE` -- JSON policy input (reference `policy` shape). Absent/unreadable -> deny-all.
-- `CLPTR4P_CLAIMS_FILE` -- JSON `{ "<subject_ref>": Claim[] }`. Absent -> empty store.
-
-## Data (vault/data/, gitignored)
-- `decisions.jsonl` -- every PolicyDecision + rejected act attempts.
-- `receipts.jsonl` -- `bundle.issue` and per-action consume receipts.
-- `proposals.jsonl` -- queued `memory_update_proposal`s (status `pending_validation`).
+## Backend selection (env)
+- `GATEWAY_DATABASE_URL` set -> postgres backend (production path).
+- else lite: `CLPTR4P_POLICY_FILE` (absent -> deny-all), `CLPTR4P_CLAIMS_FILE` (absent -> empty). Audit to `vault/data/*.jsonl`.
 
 ## Flow
 ```
 context_request(request)
-  -> validate -> decide(policy) -> log decision
+  -> validate -> policy.active() -> decide -> audit.decision
   -> deny/needs_approval: return decision
-  -> allow*: select claims -> issueScopedBundle -> receipt(bundle.issue) -> store bundle
+  -> allow*: claims.select(subject, predicates) -> issueScopedBundle
+            -> bundles.issue(bundle + receipt)   [one txn]
 context_act(bundle_id, action)
-  -> store.consume: not found | expired | consumed | ungranted => reject + log
-  -> ok: receipt(action, actor=recipient) -> return bundle.context + restrictions
+  -> bundles.consume: FOR UPDATE -> evaluate (not found | consumed | expired | ungranted)
+            -> ok: consumed_at + receipt          [one txn]
+            -> reject: audit.rejectedAct
 memory_propose(proposal)
-  -> validate -> append proposals.jsonl -> pending_validation
+  -> validate -> audit.proposal (status pending_validation)
 ```
+
+## Provenance
+Bundle `provenance_handles` are `prov_<sha256[:16]>(claim_id)`: opaque to the consumer, resolvable only inside the vault.
 
 ## Dev
 ```
 cd gateway
-deno task check   # typecheck
-deno task test    # unit tests
-deno task smoke   # stdio end-to-end: allow -> act -> replay rejected -> propose
+deno task check      # typecheck
+deno task test       # unit tests (lite backend)
+deno task smoke      # lite stdio e2e: allow -> act -> replay rejected -> propose
+deno task smoke:pg   # postgres e2e incl. restart durability (needs vault/.env sourced)
+cd ../vault && deno run --allow-net=127.0.0.1:5433 --allow-env verify_rbac.ts
 ```
 
 ## Not yet
-- Durable bundle store (in-memory; restart drops issued bundles by design for now).
-- Real action executors behind `context_act` (currently returns approved context; caller acts).
-- Proposal review/commit path into the vault.
-- Postgres/pgvector vault backend replacing the JSON claim file.
+- Real action executors behind `context_act` (returns approved context; caller acts).
+- Proposal review/commit path into `claims` (needs a reviewer role, not the gateway).
+- Capture/normalize pipeline feeding `source_events` -> `claims` (+ embeddings).
+- Migration of ob1l data (import as source_events; re-derive claims).
 - AAA `/.well-known` handshake for agent profiles.
+- Point the live Hermes MCP config at the postgres backend (set `GATEWAY_DATABASE_URL` in the server env).

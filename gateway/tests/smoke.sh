@@ -16,7 +16,9 @@ jq '{(.request.subject_ref): .claims}' "$REF/valid-exchange.json" > "$CLAIMS_FIL
 trap 'rm -f "$POLICY_FILE" "$CLAIMS_FILE"' EXIT
 
 run_gateway() {
-  CLPTR4P_POLICY_FILE="$POLICY_FILE" CLPTR4P_CLAIMS_FILE="$CLAIMS_FILE" timeout 15 deno run \
+  # Force the lite backend regardless of ambient env.
+  env -u GATEWAY_DATABASE_URL \
+    CLPTR4P_POLICY_FILE="$POLICY_FILE" CLPTR4P_CLAIMS_FILE="$CLAIMS_FILE" timeout 15 deno run \
     --allow-read=.,"$REF","$POLICY_FILE","$CLAIMS_FILE" --allow-write=../vault/data --allow-env main.ts 2>/dev/null
 }
 
