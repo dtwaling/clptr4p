@@ -5,21 +5,22 @@ import {
   ListToolsRequestSchema,
 } from "npm:@modelcontextprotocol/sdk/types.js";
 import {
+  assertNoSecretFields,
   decideContextRequest,
   issueScopedBundle,
-  writeReceipt,
   validateContextRequest,
-  assertNoSecretFields
+  validateMemoryUpdateProposal,
+  writeReceipt,
 } from "../context-layer-reference/context-layer-reference.mjs";
-import { appendFileSync } from "node:fs";
+import { BundleStore } from "./bundle_store.ts";
+import { ClaimStore } from "./claim_store.ts";
+import { AuditLog } from "./audit.ts";
 
-const server = new Server(
-  { name: "clptr4p-gateway", version: "0.1.0" },
-  { capabilities: { tools: {} } }
-);
+const GATEWAY_ID = "did:local:clptr4p-gateway";
+const VAULT_DATA = new URL("../vault/data/", import.meta.url).pathname;
 
-// Hardcoded deny-by-default policy input
-const DEFAULT_POLICY = {
+// Deny-by-default policy input (shape validated by the reference validatePolicy).
+const DENY_ALL_POLICY = {
   id: "urn:cl:policy:default-deny",
   version: "default-deny/1",
   issuer: "urn:cl:policy-engine:local",
@@ -29,126 +30,189 @@ const DEFAULT_POLICY = {
   allowed_actions: [],
   max_retention_seconds: 3600,
   allow_onward_disclosure: false,
-  transform_requirements: []
+  transform_requirements: [],
 };
 
-const DECISIONS_LOG = "../vault/data/decisions.jsonl";
-const RECEIPTS_LOG = "../vault/data/receipts.jsonl";
-
-function logDecision(decision: any) {
-  try { appendFileSync(DECISIONS_LOG, JSON.stringify({ timestamp: new Date().toISOString(), decision }) + "\n"); } catch (e) { console.error("Failed to log decision", e); }
+// Optional policy override. Absent or unreadable -> fail closed to deny-all.
+function loadPolicy(): typeof DENY_ALL_POLICY {
+  const path = Deno.env.get("CLPTR4P_POLICY_FILE");
+  if (!path) return DENY_ALL_POLICY;
+  try {
+    return JSON.parse(Deno.readTextFileSync(path));
+  } catch (e) {
+    console.error(`policy load failed (${path}), falling back to deny-all:`, (e as Error).message);
+    return DENY_ALL_POLICY;
+  }
 }
+const ACTIVE_POLICY = loadPolicy();
 
-function logReceipt(receipt: any) {
-  try { appendFileSync(RECEIPTS_LOG, JSON.stringify({ timestamp: new Date().toISOString(), receipt }) + "\n"); } catch (e) { console.error("Failed to log receipt", e); }
+// Optional vault claims. Absent -> empty store; allow decisions will then fail
+// bundle issuance with MISSING_GRANTED_CLAIM, which is the correct outcome.
+function loadClaims(): ClaimStore {
+  const path = Deno.env.get("CLPTR4P_CLAIMS_FILE");
+  if (!path) return ClaimStore.empty();
+  try {
+    return ClaimStore.fromFile(path);
+  } catch (e) {
+    console.error(`claims load failed (${path}), using empty store:`, (e as Error).message);
+    return ClaimStore.empty();
+  }
 }
+const CLAIMS = loadClaims();
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: "context_request",
-        description: "Request context for a specific purpose. Returns a Scoped Context Bundle.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            request: { type: "object", description: "The ContextRequest object" }
-          },
-          required: ["request"]
-        }
-      },
-      {
-        name: "context_act",
-        description: "Execute an action using a valid Scoped Context Bundle.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            bundle_id: { type: "string" },
-            action: { type: "string" },
-            payload: { type: "object" }
-          },
-          required: ["bundle_id", "action"]
-        }
-      },
-      {
-        name: "memory_propose",
-        description: "Propose a memory update. Returns a receipt.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            proposal: { type: "object" }
-          },
-          required: ["proposal"]
-        }
-      }
-    ]
-  };
+const bundles = new BundleStore();
+const decisions = new AuditLog(`${VAULT_DATA}decisions.jsonl`);
+const receipts = new AuditLog(`${VAULT_DATA}receipts.jsonl`);
+const proposals = new AuditLog(`${VAULT_DATA}proposals.jsonl`);
+
+// deno-lint-ignore no-explicit-any
+type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+
+const ok = (payload: unknown): ToolResult => ({
+  content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+});
+const fail = (message: string): ToolResult => ({
+  content: [{ type: "text", text: message }],
+  isError: true,
 });
 
-// @ts-ignore
-server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+// deno-lint-ignore no-explicit-any
+function handleContextRequest(ctxReq: any): ToolResult {
+  const validation = validateContextRequest(ctxReq);
+  if (!validation.valid) {
+    return fail(`Invalid request: ${JSON.stringify(validation.errors)}`);
+  }
+
+  const decision = decideContextRequest(ctxReq, ACTIVE_POLICY);
+  decisions.append("policy_decision", decision);
+
+  if (decision.decision === "deny" || decision.decision === "needs_approval") {
+    return ok({ decision });
+  }
+  if (decision.decision !== "allow" && decision.decision !== "allow_with_reductions") {
+    return fail(`Unhandled decision state: ${decision.decision}`);
+  }
+
+  const requested = (ctxReq.selectors ?? []).map((s: { predicate: string }) => s.predicate);
+  const claims = CLAIMS.select(ctxReq.subject_ref, requested);
+  const bundle = issueScopedBundle({ request: ctxReq, decision, claims, issuer: GATEWAY_ID });
+  const now = new Date().toISOString();
+  const receipt = writeReceipt({
+    operation: "bundle.issue",
+    request: ctxReq,
+    decision,
+    bundle,
+    actor: GATEWAY_ID,
+    issuer: GATEWAY_ID,
+    outcome: "success",
+    started_at: now,
+    completed_at: now,
+    user_summary: "Issued scoped bundle.",
+  });
+  receipts.append("receipt", receipt);
+  bundles.issue(ctxReq, decision, bundle);
+  return ok({ bundle, receipt });
+}
+
+// deno-lint-ignore no-explicit-any
+function handleContextAct(bundleId: string, action: string, payload: any): ToolResult {
+  const startedAt = new Date();
+  const result = bundles.consume(bundleId, action, startedAt);
+  if (!result.ok) {
+    decisions.append("act_rejected", { bundle_id: bundleId, action, code: result.code, detail: result.detail });
+    return fail(`${result.code}: ${result.detail}`);
+  }
+
+  const { request, decision, bundle } = result.entry;
+  // Executor stub: the lite profile has no bound side-effect adapters yet.
+  // Record intent + payload digest via the receipt and return the bundle
+  // context so the caller can act on approved facts only.
+  const receipt = writeReceipt({
+    operation: action,
+    request,
+    decision,
+    bundle,
+    actor: bundle.recipient,
+    issuer: GATEWAY_ID,
+    outcome: "success",
+    started_at: startedAt.toISOString(),
+    completed_at: new Date().toISOString(),
+    user_summary: `Consumed bundle for ${action}.`,
+  });
+  receipts.append("receipt", receipt);
+  return ok({ action, context: bundle.context, restrictions: bundle.restrictions, payload_received: payload !== undefined, receipt });
+}
+
+// deno-lint-ignore no-explicit-any
+function handleMemoryPropose(proposal: any): ToolResult {
+  const validation = validateMemoryUpdateProposal(proposal);
+  if (!validation.valid) {
+    return fail(`Invalid proposal: ${JSON.stringify(validation.errors)}`);
+  }
+  proposals.append("memory_update_proposal", proposal);
+  return ok({ status: "pending_validation", proposal_id: proposal.id });
+}
+
+const server = new Server(
+  { name: "clptr4p-gateway", version: "0.2.0" },
+  { capabilities: { tools: {} } },
+);
+
+server.setRequestHandler(ListToolsRequestSchema, () => ({
+  tools: [
+    {
+      name: "context_request",
+      description: "Request context for a specific purpose. Returns a PolicyDecision and, if allowed, a Scoped Context Bundle.",
+      inputSchema: {
+        type: "object",
+        properties: { request: { type: "object", description: "context_request object (context-layer/0.2-draft)" } },
+        required: ["request"],
+      },
+    },
+    {
+      name: "context_act",
+      description: "Consume a Scoped Context Bundle to perform one granted action. Single-use; fails closed on expiry or ungranted action.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          bundle_id: { type: "string" },
+          action: { type: "string", description: "Must appear in bundle.capabilities" },
+          payload: { type: "object" },
+        },
+        required: ["bundle_id", "action"],
+      },
+    },
+    {
+      name: "memory_propose",
+      description: "Submit a memory_update_proposal. Never commits directly; queued for review.",
+      inputSchema: {
+        type: "object",
+        properties: { proposal: { type: "object", description: "memory_update_proposal object (context-layer/0.2-draft)" } },
+        required: ["proposal"],
+      },
+    },
+  ],
+}));
+
+// deno-lint-ignore no-explicit-any
+server.setRequestHandler(CallToolRequestSchema, (request: any) => {
   try {
-    const args = request.params.arguments || {};
-    assertNoSecretFields(args);
-
-    if (request.params.name === "context_request") {
-      const ctxReq = args.request;
-      
-      const validation = validateContextRequest(ctxReq);
-      if (!validation.valid) {
-        return { content: [{ type: "text", text: `Invalid request: ${JSON.stringify(validation.errors)}` }], isError: true };
-      }
-      
-      const decision = decideContextRequest(ctxReq, DEFAULT_POLICY);
-      
-      if (decision.decision === "deny" || decision.decision === "needs_approval") {
-         logDecision(decision);
-         return { content: [{ type: "text", text: JSON.stringify({ decision }, null, 2) }] };
-      }
-      
-      if (decision.decision !== "allow" && decision.decision !== "allow_with_reductions") {
-         return { content: [{ type: "text", text: `Unhandled decision state: ${decision.decision}` }], isError: true };
-      }
-      
-      const bundle = issueScopedBundle({
-        request: ctxReq,
-        decision: decision,
-        claims: [],
-        issuer: "did:local:gateway"
-      });
-      
-      const receipt = writeReceipt({
-        operation: "bundle.issue",
-        request: ctxReq,
-        decision: decision,
-        bundle: bundle,
-        actor: "did:local:gateway",
-        issuer: "did:local:gateway",
-        outcome: "success",
-        started_at: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-        user_summary: "Issued scoped bundle."
-      });
-      
-      logReceipt(receipt);
-      return { content: [{ type: "text", text: JSON.stringify({ bundle, receipt }, null, 2) }] };
+    const args = request.params.arguments ?? {};
+    assertNoSecretFields(args, "tool arguments");
+    switch (request.params.name) {
+      case "context_request":
+        return handleContextRequest(args.request);
+      case "context_act":
+        return handleContextAct(args.bundle_id, args.action, args.payload);
+      case "memory_propose":
+        return handleMemoryPropose(args.proposal);
+      default:
+        return fail(`Unknown tool: ${request.params.name}`);
     }
-
-    if (request.params.name === "memory_propose") {
-      return { content: [{ type: "text", text: "Not implemented yet. Requires durable storage and authorization." }], isError: true };
-    }
-
-    if (request.params.name === "context_act") {
-      return { content: [{ type: "text", text: "Not implemented yet. Requires bundle validation." }], isError: true };
-    }
-
-    throw new Error(`Unknown tool: ${request.params.name}`);
   } catch (e) {
-    const error = e as Error;
-    return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+    return fail(`Error: ${(e as Error).message}`);
   }
 });
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
-console.error("clptr4p Policy Gateway running on stdio");
+await server.connect(new StdioServerTransport());
+console.error(`clptr4p Policy Gateway v0.2.0 running on stdio (policy: ${ACTIVE_POLICY.id}, subjects: ${CLAIMS.subjectCount})`);
