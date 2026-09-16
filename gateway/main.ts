@@ -11,6 +11,7 @@ import {
   validateContextRequest,
   assertNoSecretFields
 } from "../context-layer-reference/context-layer-reference.mjs";
+import { appendFileSync } from "node:fs";
 
 const server = new Server(
   { name: "clptr4p-gateway", version: "0.1.0" },
@@ -26,10 +27,21 @@ const DEFAULT_POLICY = {
   allowed_selectors: [],
   denied_selectors: [],
   allowed_actions: [],
-  max_retention_seconds: 3600, // Must be 1-86400
+  max_retention_seconds: 3600,
   allow_onward_disclosure: false,
   transform_requirements: []
 };
+
+const DECISIONS_LOG = "../vault/data/decisions.jsonl";
+const RECEIPTS_LOG = "../vault/data/receipts.jsonl";
+
+function logDecision(decision: any) {
+  try { appendFileSync(DECISIONS_LOG, JSON.stringify({ timestamp: new Date().toISOString(), decision }) + "\n"); } catch (e) { console.error("Failed to log decision", e); }
+}
+
+function logReceipt(receipt: any) {
+  try { appendFileSync(RECEIPTS_LOG, JSON.stringify({ timestamp: new Date().toISOString(), receipt }) + "\n"); } catch (e) { console.error("Failed to log receipt", e); }
+}
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
@@ -90,8 +102,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
       const decision = decideContextRequest(ctxReq, DEFAULT_POLICY);
       
       if (decision.decision === "deny" || decision.decision === "needs_approval") {
-         // For denied or approval-required requests, the PolicyDecision is the audit artifact.
-         // writeReceipt requires a bundle, which is not issued here.
+         logDecision(decision);
          return { content: [{ type: "text", text: JSON.stringify({ decision }, null, 2) }] };
       }
       
@@ -119,6 +130,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
         user_summary: "Issued scoped bundle."
       });
       
+      logReceipt(receipt);
       return { content: [{ type: "text", text: JSON.stringify({ bundle, receipt }, null, 2) }] };
     }
 
