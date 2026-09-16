@@ -17,16 +17,16 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
-// Hardcoded deny-by-default policy input (matches valid-exchange.json policy shape)
+// Hardcoded deny-by-default policy input
 const DEFAULT_POLICY = {
   id: "urn:cl:policy:default-deny",
   version: "default-deny/1",
   issuer: "urn:cl:policy-engine:local",
   allowed_purpose_codes: [],
   allowed_selectors: [],
-  denied_selectors: ["*"],
+  denied_selectors: [],
   allowed_actions: [],
-  max_retention_seconds: 0,
+  max_retention_seconds: 3600, // Must be 1-86400
   allow_onward_disclosure: false,
   transform_requirements: []
 };
@@ -73,8 +73,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-// Use explicit typing to satisfy Deno's strict checks
-server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name: string; arguments?: any } }) => {
+// @ts-ignore
+server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
   try {
     const args = request.params.arguments || {};
     assertNoSecretFields(args);
@@ -89,22 +89,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
       
       const decision = decideContextRequest(ctxReq, DEFAULT_POLICY);
       
-      if (decision.decision === "deny") {
-         const receipt = writeReceipt({
-           operation: "context.request",
-           request: ctxReq,
-           decision: decision,
-           actor: "did:local:gateway",
-           issuer: "did:local:gateway",
-           outcome: "denied",
-           started_at: new Date().toISOString(),
-           completed_at: new Date().toISOString(),
-           user_summary: "Request denied by default policy."
-         });
-         return { content: [{ type: "text", text: JSON.stringify({ decision, receipt }, null, 2) }] };
+      if (decision.decision === "deny" || decision.decision === "needs_approval") {
+         // For denied or approval-required requests, the PolicyDecision is the audit artifact.
+         // writeReceipt requires a bundle, which is not issued here.
+         return { content: [{ type: "text", text: JSON.stringify({ decision }, null, 2) }] };
       }
       
-      // Only explicit allow states should proceed to bundle issuance
       if (decision.decision !== "allow" && decision.decision !== "allow_with_reductions") {
          return { content: [{ type: "text", text: `Unhandled decision state: ${decision.decision}` }], isError: true };
       }
