@@ -6,8 +6,9 @@ import postgres from "npm:postgres@3.4.5";
 
 const dbUrl = Deno.env.get("DATABASE_URL");
 const gatewayPassword = Deno.env.get("GATEWAY_PASSWORD");
-if (!dbUrl || !gatewayPassword) {
-  console.error("DATABASE_URL and GATEWAY_PASSWORD are required");
+const capturePassword = Deno.env.get("CAPTURE_PASSWORD");
+if (!dbUrl || !gatewayPassword || !capturePassword) {
+  console.error("DATABASE_URL, GATEWAY_PASSWORD, and CAPTURE_PASSWORD are required");
   Deno.exit(1);
 }
 
@@ -20,12 +21,18 @@ try {
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`;
 
-  const [role] = await sql`SELECT 1 FROM pg_roles WHERE rolname = 'clptr4p_gateway'`;
-  if (!role) {
-    // Password cannot be parameterized in DDL; escape single quotes defensively.
+  const [gatewayRole] = await sql`SELECT 1 FROM pg_roles WHERE rolname = 'clptr4p_gateway'`;
+  if (!gatewayRole) {
     const escaped = gatewayPassword.replaceAll("'", "''");
     await sql.unsafe(`CREATE ROLE clptr4p_gateway WITH LOGIN PASSWORD '${escaped}'`);
     console.log("created role clptr4p_gateway");
+  }
+
+  const [captureRole] = await sql`SELECT 1 FROM pg_roles WHERE rolname = 'clptr4p_capture'`;
+  if (!captureRole) {
+    const escaped = capturePassword.replaceAll("'", "''");
+    await sql.unsafe(`CREATE ROLE clptr4p_capture WITH LOGIN PASSWORD '${escaped}'`);
+    console.log("created role clptr4p_capture");
   }
 
   const files = [...Deno.readDirSync(migrationsDir)]

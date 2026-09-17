@@ -17,9 +17,9 @@ LATER=$(date -u -d '+2 hours' +%Y-%m-%dT%H:%M:%SZ)
 # Fresh request id per run: bundle ids are deterministic digests, so a repeated
 # request id would (correctly) collide with a previously persisted bundle.
 RUN_ID="smoke-$(date -u +%s)"
-REQ=$(jq -c --arg now "$NOW" --arg later "$LATER" --arg id "urn:cl:request:$RUN_ID" \
-  '.request | .id=$id | .created_at=$now | .expires_at=$later' "$REF/valid-exchange.json")
-SUBJECT=$(jq -r '.request.subject_ref' "$REF/valid-exchange.json")
+SUBJECT="vault://subjects/$RUN_ID"
+REQ=$(jq -c --arg now "$NOW" --arg later "$LATER" --arg id "urn:cl:request:$RUN_ID" --arg sub "$SUBJECT" \
+  '.request | .id=$id | .created_at=$now | .expires_at=$later | .subject_ref=$sub' "$REF/valid-exchange.json")
 POLICY=$(jq -c '.policy' "$REF/valid-exchange.json")
 
 admin_sql() { deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts; }
@@ -32,11 +32,10 @@ UPDATE policies SET active = false;
 INSERT INTO policies (id, version, issuer, policy_json, active)
 VALUES ('urn:cl:policy:smoke', 'smoke/1', 'urn:cl:policy-engine:local', '$POLICY'::jsonb, true)
 ON CONFLICT (id) DO UPDATE SET policy_json = EXCLUDED.policy_json, active = true;
-DELETE FROM claims WHERE subject_ref = '$SUBJECT';
 INSERT INTO claims (id, subject_ref, predicate, claim, value, confidence) VALUES
-  ('urn:cl:claim:smoke-delivery', '$SUBJECT', 'requested_delivery_date', 'the launch timeline was requested by Friday.', '2026-08-14', 0.93),
-  ('urn:cl:claim:smoke-stakeholder', '$SUBJECT', 'requesting_stakeholder', 'the request came from the launch lead.', 'launch lead', 0.98),
-  ('urn:cl:claim:smoke-budget', '$SUBJECT', 'budget_delta', 'the internal budget delta is restricted.', 'synthetic restricted amount', 0.99);
+  ('urn:cl:claim:${RUN_ID}-delivery', '$SUBJECT', 'requested_delivery_date', 'the launch timeline was requested by Friday.', '"2026-08-14"'::jsonb, 0.93),
+  ('urn:cl:claim:${RUN_ID}-stakeholder', '$SUBJECT', 'requesting_stakeholder', 'the request came from the launch lead.', '"launch lead"'::jsonb, 0.98),
+  ('urn:cl:claim:${RUN_ID}-budget', '$SUBJECT', 'budget_delta', 'the internal budget delta is restricted.', '"synthetic restricted amount"'::jsonb, 0.99);
 COMMIT;
 SQL
 }

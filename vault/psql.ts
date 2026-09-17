@@ -15,7 +15,8 @@ if (!body.trim()) {
 // max: 1 so raw BEGIN/COMMIT in piped SQL runs on a single connection.
 const sql = postgres(url, { onnotice: () => {}, max: 1 });
 try {
-  await sql.unsafe(body);
+  const result = await sql.unsafe(body);
+  console.log(JSON.stringify(result, (_, v) => typeof v === 'bigint' ? v.toString() : v));
 } finally {
   await sql.end();
 }

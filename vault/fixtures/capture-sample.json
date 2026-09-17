@@ -1,0 +1,21 @@
+{
+  "subject_ref": "vault://subjects/primary",
+  "origin": "telegram",
+  "actor": "urn:user:dustin",
+  "occurred_at": "2026-09-16T05:00:00Z",
+  "visibility": "private",
+  "payload": {
+    "text": "Call me Dustin from now on.",
+    "chat_id": 12345
+  },
+  "claims": [
+    {
+      "predicate": "preferred_name",
+      "value": "Dustin",
+      "claim": "the user prefers to be called Dustin",
+      "confidence": 0.95,
+      "datatype": "string",
+      "supersede": true
+    }
+  ]
+}

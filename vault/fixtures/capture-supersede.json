@@ -1,0 +1,21 @@
+{
+  "subject_ref": "vault://subjects/primary",
+  "origin": "telegram",
+  "actor": "urn:user:dustin",
+  "occurred_at": "2026-09-16T06:00:00Z",
+  "visibility": "private",
+  "payload": {
+    "text": "Actually, I go by dtdubs now.",
+    "chat_id": 12345
+  },
+  "claims": [
+    {
+      "predicate": "preferred_name",
+      "value": "dtdubs",
+      "claim": "the user prefers to be called dtdubs",
+      "confidence": 0.99,
+      "datatype": "string",
+      "supersede": true
+    }
+  ]
+}

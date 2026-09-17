@@ -36,6 +36,7 @@ class PgClaims implements ClaimSource {
       WHERE subject_ref = ${subjectRef}
         AND predicate = ANY(${predicates})
         AND superseded_by IS NULL
+        AND (valid_from IS NULL OR valid_from <= now())
         AND (valid_to IS NULL OR valid_to > now())`;
     // Provenance handle must be an opaque name (reference isName regex), not
     // the claim id. Derive a stable short digest so the bundle reveals nothing
@@ -52,9 +53,13 @@ class PgClaims implements ClaimSource {
 }
 
 async function provenanceHandle(claimId: string): Promise<string> {
+  const dekHex = Deno.env.get("VAULT_DEK");
+  if (!dekHex) throw new Error("VAULT_DEK required for provenance handles");
+  const keyBytes = new Uint8Array(dekHex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
+  const key = await crypto.subtle.importKey("raw", keyBytes.buffer as ArrayBuffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const bytes = new TextEncoder().encode(claimId);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  const hex = [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const signature = await crypto.subtle.sign("HMAC", key, bytes);
+  const hex = [...new Uint8Array(signature)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
   return `prov_${hex}`;
 }
 

@@ -45,8 +45,8 @@ async function handleContextRequest(ctxReq: Json): Promise<ToolResult> {
     return fail(`Unhandled decision state: ${decision.decision}`);
   }
 
-  const requested = (ctxReq.selectors ?? []).map((s: { predicate: string }) => s.predicate);
-  const claims = await store.claims.select(ctxReq.subject_ref, requested);
+  const granted = (decision.granted_selectors ?? []).map((s: { predicate: string }) => s.predicate);
+  const claims = await store.claims.select(ctxReq.subject_ref, granted);
   const bundle = issueScopedBundle({ request: ctxReq, decision, claims, issuer: GATEWAY_ID });
 
   const now = new Date().toISOString();
