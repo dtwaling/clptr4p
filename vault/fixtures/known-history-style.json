@@ -1,0 +1,48 @@
+{
+  "subject_ref": "vault://subjects/primary",
+  "origin": "session-history",
+  "actor": "urn:user:dustin",
+  "occurred_at": "2026-09-14T00:00:00Z",
+  "visibility": "private",
+  "payload": {
+    "summary": "Dustin's working style and collaboration preferences, demonstrated across clptr4p and prior subprojects.",
+    "source": "ThinkTank session history, AGENTS.md operating principles, persistent user profile"
+  },
+  "claims": [
+    {
+      "predicate": "org.preference",
+      "value": "class-first, generalize-before-create: organize knowledge at class/umbrella level, generalize existing skills before adding new ones",
+      "claim": "the user prefers class-first organization: generalize existing skills/umbrellas before creating new ones",
+      "confidence": 0.92,
+      "datatype": "string"
+    },
+    {
+      "predicate": "ui.rule",
+      "value": "treat rendered output and direct visual evidence as absolute truth over backend config (theme.json, DB styles) when they conflict",
+      "claim": "for frontend work, rendered output and canonical assets are ground truth over backend configuration",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "security.rule",
+      "value": "review and remediate vulnerability and supply-chain findings before running builds, containers, or project code from third-party-based local stacks",
+      "claim": "third-party-based local stacks get security review before builds or code run",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "collab.preference",
+      "value": "values an honest, challenging collaborator over a polite agreeable one; wants the agent to speak up when stuck or looping",
+      "confidence": 0.98,
+      "claim": "the user wants honest pushback and open disagreement substantiated with evidence, and immediate escalation when the agent is stuck",
+      "datatype": "string"
+    },
+    {
+      "predicate": "memory.rule",
+      "value": "procedures and workflows belong in skills (loaded when relevant); only facts applying to every session belong in persistent memory; task progress belongs on the kanban board",
+      "claim": "knowledge is separated into skills (procedures), memory (universal facts), and kanban (task state) -- never conflated",
+      "confidence": 0.9,
+      "datatype": "string"
+    }
+  ]
+}

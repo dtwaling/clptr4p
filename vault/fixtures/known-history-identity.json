@@ -1,0 +1,48 @@
+{
+  "subject_ref": "vault://subjects/primary",
+  "origin": "session-history",
+  "actor": "urn:user:dustin",
+  "occurred_at": "2026-05-24T00:00:00Z",
+  "visibility": "private",
+  "payload": {
+    "summary": "Dustin's stable working identity and environment, established across ThinkTank sessions.",
+    "source": "ThinkTank workspace collaboration history, ob1l and clptr4p projects"
+  },
+  "claims": [
+    {
+      "predicate": "user.role",
+      "value": "Technical Architect / Software Engineer",
+      "claim": "the user is a technical architect and software engineer who operates the Hermes environment as a toolset for his work",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "workspace.root",
+      "value": "/mnt/bro/thinktank",
+      "claim": "the user's primary workspace is /mnt/bro/thinktank, a brainstorming workbench (not a traditional codebase)",
+      "confidence": 0.99,
+      "datatype": "string"
+    },
+    {
+      "predicate": "host.name",
+      "value": "trogdor",
+      "claim": "the user's workstation hostname is trogdor; terminal username is dtdubs",
+      "confidence": 0.99,
+      "datatype": "string"
+    },
+    {
+      "predicate": "github.handle",
+      "value": "dtwaling",
+      "claim": "the user's GitHub account is dtwaling",
+      "confidence": 0.98,
+      "datatype": "string"
+    },
+    {
+      "predicate": "work.pattern",
+      "value": "works in bursts with long gaps between sessions; relies on durable cross-session state (kanban board) rather than tracker files",
+      "claim": "the user works in bursts separated by long gaps and wants stateful task tracking on the kanban board, not tracker files",
+      "confidence": 0.9,
+      "datatype": "string"
+    }
+  ]
+}

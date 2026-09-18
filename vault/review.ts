@@ -133,7 +133,10 @@ async function commit(id: string, action: "committed" | "rejected", reason?: str
       INSERT INTO source_events (id, subject_ref, origin, actor, occurred_at, visibility, payload_digest, payload_encrypted)
       VALUES (${eventId}, ${p.subject_ref}, 'review', ${reviewer}, ${nowIso}, 'private', ${digest}, ${encrypted})`;
 
-    for (const c of p.proposal_json.proposed_claims ?? []) {
+    // Claims are committed on approve ONLY. Rejection mints the decision event
+    // but must not write any claims (guard explicitly on the action).
+    if (action === "committed") {
+      for (const c of p.proposal_json.proposed_claims ?? []) {
       const claimId = await hashId("claim", p.subject_ref, c.predicate, JSON.stringify(c.object.value), eventId);
       const claimText = `reviewer-approved proposal asserts ${c.predicate} is ${JSON.stringify(c.object.value)}`;
 
@@ -156,6 +159,7 @@ async function commit(id: string, action: "committed" | "rejected", reason?: str
             AND predicate = ${c.predicate}
             AND superseded_by IS NULL
             AND id != ${claimId}`;
+      }
       }
     }
 

@@ -130,6 +130,14 @@ REJ=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:use
   deno run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault/capture ../vault/review.ts reject "urn:cl:proposal:$RUN_ID-bogus" --reason "smoke reject")
 echo "  $REJ"
 echo "$REJ" | grep -q "rejected" || { echo "FAIL: reject"; exit 1; }
+echo "$REJ" | grep -q "0 claim(s)" || { echo "FAIL: reject reported nonzero claims"; exit 1; }
+# Rejection must commit ZERO claims -- the exact bug where reject wrote claims.
+cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /tmp/reject_claims.json
+SELECT count(*) as n FROM claims WHERE subject_ref = '$SUBJECT' AND predicate = 'x.verified.handle' AND value @> '"bogus"';
+SQL
+N=$(jq -r '.[0].n' /tmp/reject_claims.json)
+echo "  claims committed by reject: $N"
+[ "$N" = "0" ] || { echo "FAIL: reject committed claims"; exit 1; }
 cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /dev/null
 SELECT 1 FROM proposals WHERE id = 'urn:cl:proposal:$RUN_ID-bogus' AND status = 'rejected';
 SQL
