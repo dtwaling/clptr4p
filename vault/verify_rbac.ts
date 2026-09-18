@@ -100,8 +100,42 @@ async function testCaptureRole() {
   }
 }
 
+async function testReviewerRole() {
+  console.log("--- Testing Reviewer Role ---");
+  const sql = postgres(Deno.env.get("REVIEWER_DATABASE_URL")!, { onnotice: () => {} });
+  try {
+    await expectAllowed("reviewer: select proposals", () => sql`SELECT count(*) FROM proposals`);
+    await expectAllowed("reviewer: select claims", () => sql`SELECT count(*) FROM claims`);
+    await expectAllowed("reviewer: insert claims", () =>
+      sql`INSERT INTO claims (id, subject_ref, predicate, claim, value, confidence)
+          VALUES ('rev_test_claim', 's', 'p', 'c', '{}'::jsonb, 0.5) ON CONFLICT DO NOTHING`);
+    await expectAllowed("reviewer: update proposals.status", () =>
+      sql`UPDATE proposals SET status = status WHERE false`);
+    await expectDenied("reviewer: insert proposals", () =>
+      sql`INSERT INTO proposals (id, subject_ref, status, proposal_json) VALUES ('x', 's', 'p', '{}')`);
+    await expectDenied("reviewer: update proposals.proposal_json", () =>
+      sql`UPDATE proposals SET proposal_json = '{}' WHERE false`);
+    await expectDenied("reviewer: select source_events", () => sql`SELECT count(*) FROM source_events`);
+    await expectDenied("reviewer: update source_events", () =>
+      sql`UPDATE source_events SET visibility = 'x' WHERE false`);
+    await expectDenied("reviewer: select policies", () => sql`SELECT count(*) FROM policies`);
+    await expectDenied("reviewer: insert decisions", () =>
+      sql`INSERT INTO decisions (id, request_ref, decision, reason_codes, decision_json) VALUES ('x','r','d','{}','{}')`);
+    await expectDenied("reviewer: select receipts", () => sql`SELECT count(*) FROM receipts`);
+  } finally {
+    const adminUrl = Deno.env.get("DATABASE_URL");
+    if (adminUrl) {
+      const adminSql = postgres(adminUrl, { onnotice: () => {} });
+      await adminSql`DELETE FROM claims WHERE id = 'rev_test_claim'`;
+      await adminSql.end();
+    }
+    await sql.end();
+  }
+}
+
 await testGatewayRole();
 await testCaptureRole();
+await testReviewerRole();
 
 if (failures > 0) {
   console.error(`${failures} boundary violation(s)`);

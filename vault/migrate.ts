@@ -7,8 +7,9 @@ import postgres from "npm:postgres@3.4.5";
 const dbUrl = Deno.env.get("DATABASE_URL");
 const gatewayPassword = Deno.env.get("GATEWAY_PASSWORD");
 const capturePassword = Deno.env.get("CAPTURE_PASSWORD");
-if (!dbUrl || !gatewayPassword || !capturePassword) {
-  console.error("DATABASE_URL, GATEWAY_PASSWORD, and CAPTURE_PASSWORD are required");
+const reviewerPassword = Deno.env.get("REVIEWER_PASSWORD");
+if (!dbUrl || !gatewayPassword || !capturePassword || !reviewerPassword) {
+  console.error("DATABASE_URL, GATEWAY_PASSWORD, CAPTURE_PASSWORD, and REVIEWER_PASSWORD are required");
   Deno.exit(1);
 }
 
@@ -33,6 +34,13 @@ try {
     const escaped = capturePassword.replaceAll("'", "''");
     await sql.unsafe(`CREATE ROLE clptr4p_capture WITH LOGIN PASSWORD '${escaped}'`);
     console.log("created role clptr4p_capture");
+  }
+
+  const [reviewerRole] = await sql`SELECT 1 FROM pg_roles WHERE rolname = 'clptr4p_reviewer'`;
+  if (!reviewerRole) {
+    const escaped = reviewerPassword.replaceAll("'", "''");
+    await sql.unsafe(`CREATE ROLE clptr4p_reviewer WITH LOGIN PASSWORD '${escaped}'`);
+    console.log("created role clptr4p_reviewer");
   }
 
   const files = [...Deno.readDirSync(migrationsDir)]
