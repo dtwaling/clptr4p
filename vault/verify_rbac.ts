@@ -43,8 +43,8 @@ async function testGatewayRole() {
   const sql = postgres(gatewayUrl!, { onnotice: () => {} });
   try {
     await expectAllowed("gateway: select active policy", async () => {
-      const [p] = await sql`SELECT id FROM policies WHERE active`;
-      if (p.id !== "urn:cl:policy:default-deny") throw new Error(`active policy is ${p.id}`);
+      const [p] = await sql`SELECT id, version, issuer FROM policies WHERE active`;
+      if (!p || typeof p.id !== "string") throw new Error("no active policy readable");
     });
     await expectAllowed("gateway: select claims", () => sql`SELECT count(*) FROM claims`);
     await expectDenied("gateway: select source_events", () => sql`SELECT count(*) FROM source_events`);

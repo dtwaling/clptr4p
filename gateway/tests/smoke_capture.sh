@@ -10,6 +10,13 @@ cd "$(dirname "$0")/.."
 RUN_ID="smoke-cap-$(date -u +%s)"
 SUBJECT="vault://subjects/$RUN_ID"
 
+# Remember the production active policy so the trap restores IT (not a hardcoded id).
+PRIOR_POLICY=$(cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts | jq -r '.[0].id'
+SELECT id FROM policies WHERE active;
+SQL
+)
+: "${PRIOR_POLICY:?no active policy found}"
+
 jq --arg sub "$SUBJECT" '.subject_ref = $sub' ../vault/fixtures/capture-sample.json > /tmp/cap1.json
 jq --arg sub "$SUBJECT" '.subject_ref = $sub' ../vault/fixtures/capture-supersede.json > /tmp/cap2.json
 
@@ -58,13 +65,14 @@ SQL
 deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts < /tmp/seed.sql
 
 restore() {
-  cat <<'SQL' > /tmp/restore.sql
-  BEGIN;
-  UPDATE policies SET active = false;
-  UPDATE policies SET active = true WHERE id = 'urn:cl:policy:default-deny';
-  COMMIT;
+  # Restore whatever policy was active BEFORE this smoke ran (smokes must
+  # never clobber the production active policy).
+  cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /dev/null
+BEGIN;
+UPDATE policies SET active = false;
+UPDATE policies SET active = true WHERE id = '${PRIOR_POLICY}';
+COMMIT;
 SQL
-  deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts < /tmp/restore.sql
   rm -f /tmp/cap1.json /tmp/cap2.json /tmp/check1.sql /tmp/check2.sql /tmp/out1.txt /tmp/out2.txt /tmp/out3.txt /tmp/seed.sql /tmp/restore.sql
 }
 trap restore EXIT
