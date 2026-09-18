@@ -22,28 +22,28 @@ NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 LATER=$(date -u -d '+2 hours' +%Y-%m-%dT%H:%M:%SZ)
 
 restore() {
-  # Restore whatever policy was active BEFORE this smoke ran.
+  # Restore the prior active policy AND remove this run's subject data in one
+  # SQL block (set -e would skip the deletes if a separate policy block failed).
   cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /dev/null
 BEGIN;
 UPDATE policies SET active = false;
 UPDATE policies SET active = true WHERE id = '${PRIOR_POLICY}';
 COMMIT;
-SQL
-  cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /dev/null
 DELETE FROM claim_sources WHERE claim_id IN (SELECT id FROM claims WHERE subject_ref = '$SUBJECT');
 DELETE FROM claims WHERE subject_ref = '$SUBJECT';
 DELETE FROM source_events WHERE subject_ref = '$SUBJECT';
 DELETE FROM proposals WHERE subject_ref = '$SUBJECT';
 SQL
 }
-trap restore EXIT
 
-# Remember the production active policy so the trap restores IT.
+# Read the production active policy BEFORE registering the trap: a read failure
+# must exit without touching anything, not fire a restore with an empty id.
 PRIOR_POLICY=$(cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts | jq -r '.[0].id'
 SELECT id FROM policies WHERE active;
 SQL
 )
 : "${PRIOR_POLICY:?no active policy found}"
+trap restore EXIT
 
 # Permissive policy for our test predicate.
 POLICY=$(jq -n -c --arg sel "x.verified.handle" '{

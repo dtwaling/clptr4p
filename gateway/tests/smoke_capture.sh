@@ -17,6 +17,24 @@ SQL
 )
 : "${PRIOR_POLICY:?no active policy found}"
 
+# Cleanup runs from the FIRST DB write onward: restore the prior active policy
+# and remove this run's subject data. Registered before any seeding so a crash
+# mid-run can never leak test data or clobber the production policy.
+restore() {
+  cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /dev/null
+BEGIN;
+UPDATE policies SET active = false;
+UPDATE policies SET active = true WHERE id = '${PRIOR_POLICY}';
+COMMIT;
+DELETE FROM claim_sources WHERE claim_id IN (SELECT id FROM claims WHERE subject_ref = '$SUBJECT');
+DELETE FROM claims WHERE subject_ref = '$SUBJECT';
+DELETE FROM source_events WHERE subject_ref = '$SUBJECT';
+DELETE FROM proposals WHERE subject_ref = '$SUBJECT';
+SQL
+  rm -f /tmp/cap1.json /tmp/cap2.json /tmp/check1.sql /tmp/check2.sql /tmp/out1.txt /tmp/out2.txt /tmp/out3.txt /tmp/seed.sql /tmp/restore.sql
+}
+trap restore EXIT
+
 jq --arg sub "$SUBJECT" '.subject_ref = $sub' ../vault/fixtures/capture-sample.json > /tmp/cap1.json
 jq --arg sub "$SUBJECT" '.subject_ref = $sub' ../vault/fixtures/capture-supersede.json > /tmp/cap2.json
 
@@ -63,19 +81,6 @@ INSERT INTO policies (id, version, issuer, policy_json, active) VALUES ('urn:cl:
 COMMIT;
 SQL
 deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts < /tmp/seed.sql
-
-restore() {
-  # Restore whatever policy was active BEFORE this smoke ran (smokes must
-  # never clobber the production active policy).
-  cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /dev/null
-BEGIN;
-UPDATE policies SET active = false;
-UPDATE policies SET active = true WHERE id = '${PRIOR_POLICY}';
-COMMIT;
-SQL
-  rm -f /tmp/cap1.json /tmp/cap2.json /tmp/check1.sql /tmp/check2.sql /tmp/out1.txt /tmp/out2.txt /tmp/out3.txt /tmp/seed.sql /tmp/restore.sql
-}
-trap restore EXIT
 
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 LATER=$(date -u -d '+2 hours' +%Y-%m-%dT%H:%M:%SZ)
