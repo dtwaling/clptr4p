@@ -100,10 +100,11 @@ under `FOR UPDATE`.
 
 ## Active policy
 
-**`personal/1`** (migration 010): purpose `retrieve.context`; selectors
-`preferred_name`, `comm.style`, `formatting.rule`; no actions; retention 3600s;
-onward disclosure forbidden. `default-deny` stays in the table as the
-fail-closed fallback (inactive). Verify with
+**`personal/2`** (migration 011): purpose `retrieve.context`; selectors
+`preferred_name`, `comm.style`, `formatting.rule`, `tech.stack`, `notes.tool`,
+`skill.rule`, `skill.cadence`, `project.active`, `repo.remote`; no actions;
+retention 3600s; onward disclosure forbidden. `default-deny` stays in the
+table as the fail-closed fallback (inactive). Verify with
 `gateway: deno task check:policy`.
 
 Note: `policies` enforces exactly one active row -- "additional policies" are

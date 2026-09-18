@@ -3,7 +3,7 @@
 #   1. seed permissive policy + claims via ADMIN (DATABASE_URL)
 #   2. gateway A (GATEWAY_DATABASE_URL): request -> act
 #   3. gateway B (fresh process): replay must be BUNDLE_ALREADY_CONSUMED from DB
-#   4. restore deny-all policy
+#   4. restore the PRIOR active policy + delete test subject data
 # Requires vault/.env sourced (DATABASE_URL, GATEWAY_DATABASE_URL).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -40,12 +40,26 @@ COMMIT;
 SQL
 }
 
+# Read the production active policy BEFORE registering the trap: a read failure
+# must exit without touching anything, not fire a restore with an empty id.
+PRIOR_POLICY=$(cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts | jq -r '.[0].id'
+SELECT id FROM policies WHERE active;
+SQL
+)
+: "${PRIOR_POLICY:?no active policy found}"
+
 restore() {
+  # Restore the prior active policy AND remove this run's subject data in one
+  # SQL block (set -e must not skip the deletes if the policy part fails).
   cat <<SQL | admin_sql
 BEGIN;
 UPDATE policies SET active = false;
-UPDATE policies SET active = true WHERE id = 'urn:cl:policy:default-deny';
+UPDATE policies SET active = true WHERE id = '${PRIOR_POLICY}';
 COMMIT;
+DELETE FROM claim_sources WHERE claim_id LIKE 'urn:cl:claim:${RUN_ID}-%';
+DELETE FROM claims WHERE subject_ref = '$SUBJECT';
+DELETE FROM source_events WHERE subject_ref = '$SUBJECT';
+DELETE FROM proposals WHERE subject_ref = '$SUBJECT';
 SQL
 }
 trap restore EXIT
