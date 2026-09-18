@@ -1,13 +1,16 @@
 # clptr4p
 
 A zero-trust memory vault for AI agents, implementing the
-[Context Layer Protocol](https://sierracatalina.com/context-layer) (v0.2-draft).
+[Context Layer Protocol](https://sierracatalina.com/context-layer) (aka: CLP).
 Agents request context for a stated purpose; a policy engine decides what they
 get; every disclosure is single-use, expiring, and receipted; every memory
 write is a proposal a human reviews. No ambient access, ever.
 
-Named for a certain excitable robot: the gateway that guards the door and
-shouts the rules.
+Intended to be like a steel *trap* for all the juicy bits buried in your context that you want kept secured, hence **CLPTR4P**.
+  ...any similarity to certain excitable robots sometimes found guarding the gateway prattling on and shouting about the rules is just your imagination, merely coincidental.
+
+> This has been on my workbench for a while, and after finally getting some time to poke at it again I had a few more idea to tinker with.  So I figure if I put publish the repo in gh, that might spur me to get after it ...probably ...maybe.  ...More to come, anyway.<br/><br/>
+> What I've checked in here is just a basic implementation of Sierra Catalina's Context Layer Protocol.  So if you're curious and what to try something bigger, fancier, or just different with her protocol I highly encourage you to check it out for yourself -> https://sierracatalina.com/context-layer
 
 ## Why
 
@@ -25,18 +28,22 @@ holding its credentials) can read and write freely. clptr4p inverts that:
 - **Fail closed** -- missing policy -> deny-all; missing claim -> no bundle;
   expired/consumed/ungranted -> rejected.
 
+Many 3rd-party memory solutions are cloud hosted or often a bit heavy or complex for to run locally.
+
+- **Hermes-Agent plugin** -- Extending clptr4p as a [hermes-agent](https://github.com/NousResearch/hermes-agent) plugin allows me to replace my 3rd-party product with a very simple, secure, and light-weight solution that I fully own and control.
+
 ## Architecture
 
 ```
-capture (CLI/agent)                     agents (MCP clients, e.g. Hermes)
-  ingest.ts                              context_request -> policy-gated bundle
-    |                                      memory_propose  -> review queue
-    v                                              ^
-  vault (Postgres 16 + pgvector)                    |
-    source_events  (encrypted, append-only)         |
-    claims         (+ embeddings, provenance)  review.ts (human CLI)
-    policies       (exactly one active)          approve -> claims + embedding
-    proposals      (pending_validation)          reject  -> decision event
+capture (CLI/agent)                           agents (MCP clients, e.g. Hermes)
+  ingest.ts                                     context_request -> policy-gated bundle
+    |                                             memory_propose  -> review queue
+    v                                                ^
+  vault (Postgres 16 + pgvector)                     |
+    source_events  (encrypted, append-only)          |
+    claims         (+ embeddings, provenance)   review.ts (human CLI)
+    policies       (exactly one active)           approve -> claims + embedding
+    proposals      (pending_validation)           reject  -> decision event
     bundles/receipts/decisions (exchange zone)
          ^
   gateway (Deno MCP server, main.ts)
