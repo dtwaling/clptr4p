@@ -36,7 +36,8 @@ from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_SELECTORS = "preferred_name,comm.style,formatting.rule"
+_DEFAULT_SELECTORS = ("preferred_name,comm.style,formatting.rule,tech.stack,"
+                      "notes.tool,skill.rule,skill.cadence,project.active,repo.remote")
 _DEFAULT_SUBJECT = "vault://subjects/primary"
 _DEFAULT_DENO = "/home/dtdubs/.deno/bin/deno"
 _DEFAULT_ENTRY = "/mnt/bro/thinktank/clptr4p/gateway/main.ts"
