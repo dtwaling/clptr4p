@@ -1,0 +1,34 @@
+{
+  "subject_ref": "vault://subjects/primary",
+  "origin": "session-history",
+  "actor": "urn:user:dustin",
+  "occurred_at": "2026-05-24T00:00:00Z",
+  "visibility": "private",
+  "payload": {
+    "summary": "Across sessions Dustin stated he goes by Dustin (dtdubs) and prefers direct, casual collaboration.",
+    "source": " Hermes session history, ThinkTank workspace collaboration"
+  },
+  "claims": [
+    {
+      "predicate": "preferred_name",
+      "value": "Dustin",
+      "claim": "the user goes by Dustin (aka dtdubs)",
+      "confidence": 0.99,
+      "datatype": "string"
+    },
+    {
+      "predicate": "comm.style",
+      "value": "concise and direct; no preamble, no recap; casual tone; push back openly when warranted",
+      "claim": "the user wants concise, direct communication without filler, in a casual collaborative tone",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "formatting.rule",
+      "value": "use ASCII double-hyphen (--), never Unicode em-dash",
+      "claim": "the user requires ASCII double-hyphens instead of em-dashes in all generated content",
+      "confidence": 0.99,
+      "datatype": "string"
+    }
+  ]
+}

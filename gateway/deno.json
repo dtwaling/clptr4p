@@ -6,6 +6,7 @@
     "smoke": "bash tests/smoke.sh",
     "smoke:pg": "bash tests/smoke_pg.sh",
     "smoke:capture": "bash tests/smoke_capture.sh",
-    "smoke:review": "bash tests/smoke_review.sh"
+    "smoke:review": "bash tests/smoke_review.sh",
+    "check:policy": "bash tests/check_policy.sh"
   }
 }

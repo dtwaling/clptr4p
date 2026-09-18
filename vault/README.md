@@ -97,3 +97,15 @@ under `FOR UPDATE`.
 - Bundle consume: `SELECT ... FOR UPDATE` + `consumed_at` + receipt in one txn.
 - Bundle issue: bundle row + issuance receipt in one txn.
 - Reviewer cannot read raw evidence; only append decision events.
+
+## Active policy
+
+**`personal/1`** (migration 010): purpose `retrieve.context`; selectors
+`preferred_name`, `comm.style`, `formatting.rule`; no actions; retention 3600s;
+onward disclosure forbidden. `default-deny` stays in the table as the
+fail-closed fallback (inactive). Verify with
+`gateway: deno task check:policy`.
+
+Note: `policies` enforces exactly one active row -- "additional policies" are
+versioned swaps (e.g. a future `personal/2` or `workspace/1`), not stacked
+policies.
