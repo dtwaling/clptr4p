@@ -14,7 +14,7 @@ jq --arg sub "$SUBJECT" '.subject_ref = $sub' ../vault/fixtures/capture-sample.j
 jq --arg sub "$SUBJECT" '.subject_ref = $sub' ../vault/fixtures/capture-supersede.json > /tmp/cap2.json
 
 echo "--- 1. Ingest sample ---"
-deno run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault,/tmp ../vault/capture/ingest.ts /tmp/cap1.json
+deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault,/tmp ../vault/capture/ingest.ts /tmp/cap1.json
 
 echo "--- 2. Verify counts ---"
 cat <<SQL > /tmp/check1.sql
@@ -26,22 +26,26 @@ grep -q '"events":"1"' /tmp/out1.txt || { echo "FAIL: expected 1 event"; cat /tm
 grep -q '"claims":"1"' /tmp/out1.txt || { echo "FAIL: expected 1 claim"; cat /tmp/out1.txt; exit 1; }
 
 echo "--- 3. Re-ingest (idempotency) ---"
-deno run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault,/tmp ../vault/capture/ingest.ts /tmp/cap1.json
+deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault,/tmp ../vault/capture/ingest.ts /tmp/cap1.json
 deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts < /tmp/check1.sql > /tmp/out2.txt
 diff /tmp/out1.txt /tmp/out2.txt || { echo "FAIL: idempotency broken"; exit 1; }
 
 echo "--- 4. Ingest supersede ---"
-deno run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault,/tmp ../vault/capture/ingest.ts /tmp/cap2.json
+deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault,/tmp ../vault/capture/ingest.ts /tmp/cap2.json
 
 echo "--- 5. Verify supersede ---"
 cat <<SQL > /tmp/check2.sql
-SELECT value, superseded_by IS NOT NULL as superseded FROM claims WHERE predicate = 'preferred_name' AND subject_ref = '$SUBJECT' ORDER BY created_at;
+SELECT value, superseded_by IS NOT NULL as superseded, embedding IS NOT NULL as embedded FROM claims WHERE predicate = 'preferred_name' AND subject_ref = '$SUBJECT' ORDER BY created_at;
 SQL
 deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts < /tmp/check2.sql > /tmp/out3.txt
 OLD_SUP=$(cat /tmp/out3.txt | jq -r '.[] | select(.value | contains("Dustin")) | .superseded')
 NEW_SUP=$(cat /tmp/out3.txt | jq -r '.[] | select(.value | contains("dtdubs")) | .superseded')
 [ "$OLD_SUP" = "true" ] || { echo "FAIL: old claim not superseded"; cat /tmp/out3.txt; exit 1; }
 [ "$NEW_SUP" = "false" ] || { echo "FAIL: new claim not active"; cat /tmp/out3.txt; exit 1; }
+# Hook: the superseding claim must be embedded INLINE (no separate embed run).
+NEW_EMB=$(cat /tmp/out3.txt | jq -r '.[] | select(.value | contains("dtdubs")) | .embedded')
+[ "$NEW_EMB" = "true" ] || { echo "FAIL: inline embed missing on new claim"; cat /tmp/out3.txt; exit 1; }
+echo "  inline embed: ok"
 
 echo "--- 6. Gateway end-to-end ---"
 POLICY='{"id":"urn:cl:policy:smoke-capture","version":"smoke/1","issuer":"urn:cl:policy-engine:local","allowed_purpose_codes":["x.test.read"],"allowed_selectors":["preferred_name"],"denied_selectors":[],"allowed_actions":[],"max_retention_seconds":3600,"allow_onward_disclosure":false,"transform_requirements":[]}'

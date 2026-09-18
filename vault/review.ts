@@ -12,6 +12,7 @@
 import postgres from "npm:postgres@3.4.5";
 import { encryptPayload } from "./capture/crypto.ts";
 import { isName } from "./capture/types.ts";
+import { embedClaimsTx } from "./capture/embed_core.ts";
 
 const dbUrl = Deno.env.get("REVIEWER_DATABASE_URL");
 const dek = Deno.env.get("VAULT_DEK")!;
@@ -135,6 +136,7 @@ async function commit(id: string, action: "committed" | "rejected", reason?: str
 
     // Claims are committed on approve ONLY. Rejection mints the decision event
     // but must not write any claims (guard explicitly on the action).
+    const committed: { id: string; claim: string; value: unknown }[] = [];
     if (action === "committed") {
       for (const c of p.proposal_json.proposed_claims ?? []) {
       const claimId = await hashId("claim", p.subject_ref, c.predicate, JSON.stringify(c.object.value), eventId);
@@ -145,6 +147,8 @@ async function commit(id: string, action: "committed" | "rejected", reason?: str
         VALUES (${claimId}, ${p.subject_ref}, ${c.predicate}, ${claimText}, ${sql.json(c.object.value as any)},
                 ${c.object.datatype ?? "json"}, ${c.confidence}, ${nowIso})
         ON CONFLICT (id) DO NOTHING`;
+
+      committed.push({ id: claimId, claim: claimText, value: c.object.value });
 
       await tx`
         INSERT INTO claim_sources (claim_id, source_event_id)
@@ -160,6 +164,17 @@ async function commit(id: string, action: "committed" | "rejected", reason?: str
             AND superseded_by IS NULL
             AND id != ${claimId}`;
       }
+      }
+
+      // Hook: embed approved claims inline. On failure the whole txn rolls
+      // back INCLUDING the claims -- an approved proposal with no embedding is
+      // a failed approve; the proposal stays pending and can be re-approved.
+      if (committed.length > 0) {
+        try {
+          await embedClaimsTx(tx, committed);
+        } catch (e) {
+          throw new Error(`embedding failed, approve rolled back: ${(e as Error).message}`);
+        }
       }
     }
 

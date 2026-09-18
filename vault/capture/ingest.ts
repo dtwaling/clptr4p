@@ -1,6 +1,7 @@
 import postgres from "npm:postgres@3.4.5";
 import { validateEnvelope } from "./types.ts";
 import { encryptPayload } from "./crypto.ts";
+import { embedClaimsTx } from "./embed_core.ts";
 
 const dbUrl = Deno.env.get("CAPTURE_DATABASE_URL");
 const dek = Deno.env.get("VAULT_DEK");
@@ -27,6 +28,10 @@ const eventId = await hashId("event", raw.subject_ref, raw.origin, raw.actor, ra
 
 const sql = postgres(dbUrl, { onnotice: () => {} });
 
+// Claims newly inserted by this run (conflicts are re-ingests); hoisted so the
+// summary line after the transaction can report the inline-embed count.
+const inserted: { id: string; claim: string; value: unknown }[] = [];
+
 try {
   await sql.begin(async (tx) => {
     // 1. Insert source event (idempotent)
@@ -52,6 +57,11 @@ try {
         ON CONFLICT DO NOTHING
       `;
 
+      // Only newly inserted claims need embedding; conflicts are re-ingests.
+      // deno-lint-ignore no-explicit-any
+      const [{ n }]: any = await tx`SELECT count(*)::int AS n FROM claims WHERE id = ${claimId} AND embedding IS NULL`;
+      if (n > 0) inserted.push({ id: claimId, claim: c.claim, value: c.value });
+
       if (c.supersede) {
         await tx`
           UPDATE claims 
@@ -63,8 +73,20 @@ try {
         `;
       }
     }
+
+    // 3. Hook: embed the new claims inline. On failure the whole txn rolls
+    // back INCLUDING the claims -- a claim without its embedding is treated as
+    // a failed ingest; the envelope can be re-ingested (idempotent).
+    if (inserted.length > 0) {
+      try {
+        await embedClaimsTx(tx, inserted);
+      } catch (e) {
+        throw new Error(`embedding failed, ingest rolled back: ${(e as Error).message}`);
+      }
+    }
   });
-  console.log(`Ingested event ${eventId} with ${raw.claims.length} claims.`);
+  const embedded = inserted.length;
+  console.log(`Ingested event ${eventId} with ${raw.claims.length} claims (${embedded} embedded).`);
 } finally {
   await sql.end();
 }

@@ -79,14 +79,14 @@ echo "  queued: $(echo "$OUT" | jq -r .proposal_id)"
 
 echo "--- 2. Reviewer sees it ---"
 LIST=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
-  deno run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault/capture ../vault/review.ts list)
+  deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts list)
 echo "$LIST" | grep -q "$RUN_ID-hermes" || { echo "FAIL: list does not show proposal"; echo "$LIST"; exit 1; }
 echo "$LIST" | grep -q "x.verified.handle=.*hermes" || { echo "FAIL: list missing claim"; echo "$LIST"; exit 1; }
 echo "  listed ok"
 
 echo "--- 3. Reviewer approves ---"
 APP=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
-  deno run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault/capture ../vault/review.ts approve "urn:cl:proposal:$RUN_ID-hermes")
+  deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts approve "urn:cl:proposal:$RUN_ID-hermes")
 echo "  $APP"
 echo "$APP" | grep -q "committed" || { echo "FAIL: approve"; exit 1; }
 
@@ -108,7 +108,7 @@ echo "  gateway returned: $VAL"
 
 echo "--- 5. Double-approve is rejected ---"
 DBL=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
-  deno run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault/capture ../vault/review.ts approve "urn:cl:proposal:$RUN_ID-hermes" 2>&1) && { echo "FAIL: double approve succeeded"; exit 1; }
+  deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts approve "urn:cl:proposal:$RUN_ID-hermes" 2>&1) && { echo "FAIL: double approve succeeded"; exit 1; }
 echo "$DBL" | grep -q -E "already committed|is committed" || { echo "FAIL: unexpected double-approve error: $DBL"; exit 1; }
 echo "  rejected: $DBL"
 
@@ -116,7 +116,7 @@ echo "--- 6. Contradicting proposal supersedes ---"
 OUT=$(call_gateway memory_propose "{\"proposal\":$(propose claptrap)}")
 echo "$OUT" | grep -q pending_validation || { echo "FAIL: propose 2"; exit 1; }
 APP2=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
-  deno run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault/capture ../vault/review.ts approve "urn:cl:proposal:$RUN_ID-claptrap")
+  deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts approve "urn:cl:proposal:$RUN_ID-claptrap")
 echo "$APP2" | grep -q "committed" || { echo "FAIL: approve 2"; exit 1; }
 BUNDLE2=$(call_gateway context_request "{\"request\":$REQ}")
 VAL2=$(echo "$BUNDLE2" | jq -r '.bundle.context[0].value')
@@ -127,7 +127,7 @@ echo "--- 7. Reject path ---"
 OUT=$(call_gateway memory_propose "{\"proposal\":$(propose bogus)}")
 echo "$OUT" | grep -q pending_validation || { echo "FAIL: propose 3"; exit 1; }
 REJ=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
-  deno run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault/capture ../vault/review.ts reject "urn:cl:proposal:$RUN_ID-bogus" --reason "smoke reject")
+  deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts reject "urn:cl:proposal:$RUN_ID-bogus" --reason "smoke reject")
 echo "  $REJ"
 echo "$REJ" | grep -q "rejected" || { echo "FAIL: reject"; exit 1; }
 echo "$REJ" | grep -q "0 claim(s)" || { echo "FAIL: reject reported nonzero claims"; exit 1; }
@@ -138,6 +138,13 @@ SQL
 N=$(jq -r '.[0].n' /tmp/reject_claims.json)
 echo "  claims committed by reject: $N"
 [ "$N" = "0" ] || { echo "FAIL: reject committed claims"; exit 1; }
+# Hook: approved claims must be embedded INLINE (no separate embed run).
+cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /tmp/emb_check.json
+SELECT count(*) as n FROM claims WHERE subject_ref = '$SUBJECT' AND predicate = 'x.verified.handle' AND embedding IS NULL;
+SQL
+UNEMB=$(jq -r '.[0].n' /tmp/emb_check.json)
+echo "  approved claims missing embedding: $UNEMB"
+[ "$UNEMB" = "0" ] || { echo "FAIL: inline embed missing on approved claims"; exit 1; }
 cat <<SQL | deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /dev/null
 SELECT 1 FROM proposals WHERE id = 'urn:cl:proposal:$RUN_ID-bogus' AND status = 'rejected';
 SQL
