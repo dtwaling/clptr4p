@@ -42,6 +42,29 @@ Envelopes are validated (`capture/types.ts`), payloads sealed with AES-256-GCM
 (`VAULT_DEK`), event/claim ids are deterministic hashes (idempotent re-ingest),
 and `supersede: true` claims atomically retire prior active claims.
 
+## Embeddings (OpenRouter)
+
+Claims are embedded with `openai/text-embedding-3-small` (1536 dims, matches
+`claims.embedding vector(1536)`). OpenRouter is stateless compute only.
+
+The API key is reused from the Hermes harness (no separate clptr4p key):
+`OPENROUTER_API_KEY` env var, else parsed from `~/.hermes/.env`.
+
+```
+set -a; . ./.env; set +a
+export OPENROUTER_API_KEY=$(grep '^OPENROUTER_API_KEY=' ~/.hermes/.env | head -1 | cut -d= -f2-)
+deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=. \
+  embed.ts [--dry-run] [--limit N] [--batch N]     # resumable backfill
+deno run ... search.ts "query text" [--limit N] [--min-sim 0.75]   # admin-side ops
+```
+
+- `embed.ts` runs as the capture role (SELECT claims, UPDATE embedding only);
+  resumable -- only NULL embeddings are picked up, so run it after any ingest
+  or approved review.
+- `search.ts` is an admin ops/verification tool; agents never query vectors
+  directly -- agent access flows through the gateway by predicate, under
+  policy.
+
 ## Proposal review (human gate)
 
 Agents submit `memory_propose` via the gateway; proposals land in the
