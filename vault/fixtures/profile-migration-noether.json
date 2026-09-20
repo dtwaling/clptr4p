@@ -1,0 +1,85 @@
+{
+  "subject_ref": "vault://subjects/primary",
+  "origin": "hermes-profile-migration",
+  "actor": "urn:user:dustin",
+  "occurred_at": "2026-09-20T07:26:30Z",
+  "visibility": "private",
+  "payload": {
+    "summary": "Migration capture from the noether profile's built-in memory file, migrated verbatim at Dustin's request ahead of flipping that profile to the clptr4p memory provider. The project.audio2midi and daemon.spawn entries overlap the shared profile memory and supersede it (noether's wording is the more recent).",
+    "source": "~/.hermes/profiles/noether/memories/MEMORY.md"
+  },
+  "claims": [
+    {
+      "predicate": "project.audio2midi",
+      "value": "/workspace/audio2midi (git submodule of /mnt/bro/thinktank); branch BrowserExtension = permanent release channel, never merged to trunk; docs in docs/plans/, docs/issues/, body-files/; Dustin sometimes types \"plas\" for \"plans\".",
+      "claim": "audio2midi lives at /workspace/audio2midi as a git submodule of ThinkTank, its BrowserExtension branch is a permanent release channel never merged to trunk, its docs live in docs/plans/, docs/issues/, and body-files/, and Dustin sometimes types \"plas\" for \"plans\"",
+      "confidence": 0.95,
+      "datatype": "string",
+      "supersede": true
+    },
+    {
+      "predicate": "skill.authoring",
+      "value": "(1) a literal 'AGENTS.md' string in a skill body trips the persistence-FP scanner -- paraphrase as \"project context doc\"; (2) NEW skills need a description under ~60 chars (system-prompt budget); put the \"Load when\" trigger in the body; write-blocked skills: executing-plans-inline (pre-existing scanner findings; ask Dustin before override), assessing-external-proposals (user-owned -- needs 'hermes curator adopt')",
+      "claim": "skill authoring quirks: never write a literal project-context filename in a skill body, keep new skill descriptions under ~60 chars with the load trigger in the body, and two skills are write-blocked (one needs Dustin's override, one needs curator adoption)",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "daemon.spawn",
+      "value": "a2m-host.py must spawn the daemon via 'uv run python3 -m audio2midi.daemon' (NOT sys.executable) so it uses the uv venv Python with aiohttp; 'uv pip install' only checks the lockfile -- use 'uv sync' then 'uv run python3 -c \"import <pkg>\"' to verify",
+      "claim": "the audio2midi native host must spawn its daemon with 'uv run python3 -m audio2midi.daemon' rather than sys.executable so it uses the uv venv Python with aiohttp, and dependency installs should be verified with 'uv sync' plus an import check rather than 'uv pip install'",
+      "confidence": 0.95,
+      "datatype": "string",
+      "supersede": true
+    },
+    {
+      "predicate": "github.ops",
+      "value": "ThinkTank fine-grained PAT push WORKS (fixed host-side 2026-09-18); clptr4p promoted: own repo dtwaling/clptr4p, branch trunk, submodule of thinktank",
+      "claim": "the ThinkTank fine-grained PAT push works (fixed host-side 2026-09-18), and clptr4p has been promoted to its own repo dtwaling/clptr4p on branch trunk as a submodule of thinktank",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "gateway.setup",
+      "value": "chosen fix (2026-06): point the desktop at the native host gateway via Settings->Gateway->Remote connection, URL http://127.0.0.1:8642; requires API_SERVER_ENABLED=true; the kanban dispatcher runs inside the gateway so the gateway owns the live kanban.db; Dustin runs the gateway natively and knows how to open it up",
+      "claim": "the desktop connects to the native host gateway via Settings->Gateway->Remote connection at http://127.0.0.1:8642 with API_SERVER_ENABLED=true, and the gateway owns the live kanban.db because the kanban dispatcher runs inside it; Dustin runs the gateway natively",
+      "confidence": 0.9,
+      "datatype": "string"
+    },
+    {
+      "predicate": "ob1l.legacy",
+      "value": "ob1l (legacy local Open Brain; superseded by clptr4p as active memory 2026-09-18): MCP server 127.0.0.1:8000, x-brain-key header auth; compose publish gated by MCP_BIND env (loopback default; -f overrides APPEND list fields)",
+      "claim": "ob1l is the legacy local Open Brain superseded by clptr4p as active memory on 2026-09-18; its MCP server listens on 127.0.0.1:8000 with x-brain-key header auth and its compose publish is gated by the MCP_BIND env var",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "desktop.quirks",
+      "value": "in Hermes desktop sessions the terminal tool's persisted working directory can be the HOST path /home/dtdubs/.hermes (which does not exist inside the container), making every command abort with cd errors -- FIX: pass an explicit workdir= to the terminal tool (e.g. workdir=/mnt/bro/thinktank); terminal/file/search/browser tools all fail with \"docker version ... failed\" when Docker Desktop is not started -- host-side fix, unblock by asking the user",
+      "claim": "in Hermes desktop sessions the terminal tool needs an explicit workdir= because the persisted cwd can be a host-only path, and terminal/file/search/browser failures mentioning docker version mean Docker Desktop is not started on the host",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "profile.rule",
+      "value": "generic persona profiles (writer/QA/reviewer/engineer archetypes) never get used -- Dustin only runs profiles that OWN something concrete (a kanban board, a gateway integration, a specific codebase); prefer tier/capability-shaped or asset-owning profiles over personality-shaped ones when proposing profile sets",
+      "claim": "Dustin only runs Hermes profiles that own something concrete such as a kanban board, a gateway integration, or a specific codebase, so prefer tier/capability-shaped or asset-owning profiles over personality-shaped ones",
+      "confidence": 0.9,
+      "datatype": "string"
+    },
+    {
+      "predicate": "kanban.dispatcher",
+      "value": "the Kanban dispatcher on this rig AUTO-RUNS: creating a card with an assignee spawns a worker in ~60s, and a specifier auto-decomposes epic cards into children; triage:true does NOT prevent dispatch; to stage cards without starting work, UPDATE status='blocked' in ~/.hermes/kanban.db (tables: tasks, task_links(parent_id,child_id), task_runs); ALSO clear stale runs or the reclaimer keeps retrying (UPDATE task_runs SET status='crashed', ended_at=<now> WHERE ended_at IS NULL; UPDATE tasks SET current_run_id=NULL); parking races with the specifier -- re-check for non-blocked cards after ~60s; pkill of workers needs user approval",
+      "claim": "the Kanban dispatcher auto-runs (assignee cards spawn workers in ~60s, a specifier decomposes epics, triage:true does not prevent dispatch), so staging cards means setting status='blocked' in ~/.hermes/kanban.db and clearing stale task_runs, then re-checking after ~60s; killing workers needs user approval",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "clptr4p.ops",
+      "value": "clptr4p is the zero-trust memory vault (Context Layer 0.2-draft) at /mnt/bro/thinktank/clptr4p: Deno MCP gateway -> Postgres vault 127.0.0.1:5433; Hermes memory.provider clptr4p is LIVE (replaced Honcho); the installed copy ~/.hermes/plugins/clptr4p must stay synced with provider/__init__.py; ops: vault/.env = creds + VAULT_DEK; review.ts = human proposal gate; scripts/verify_provider.py = E2E health check; no heredoc scripts (approval-gate hygiene)",
+      "claim": "clptr4p is the zero-trust memory vault at /mnt/bro/thinktank/clptr4p (Deno MCP gateway over a Postgres vault on 127.0.0.1:5433), it is the live Hermes memory provider replacing Honcho, its installed plugin copy must stay synced with provider/__init__.py, and its ops are vault/.env for creds plus VAULT_DEK, review.ts as the human proposal gate, and scripts/verify_provider.py as the E2E health check",
+      "confidence": 0.95,
+      "datatype": "string"
+    }
+  ]
+}

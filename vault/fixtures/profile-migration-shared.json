@@ -1,0 +1,69 @@
+{
+  "subject_ref": "vault://subjects/primary",
+  "origin": "hermes-profile-migration",
+  "actor": "urn:user:dustin",
+  "occurred_at": "2026-09-20T07:26:09Z",
+  "visibility": "private",
+  "payload": {
+    "summary": "Migration capture from the Hermes built-in profile memory files. The MEMORY.md files of profiles assistant, planner, analyst, and implementer are byte-identical (md5 d7b9c2a223be2c6d9aa6c4f9dd4ac957), so this single envelope carries the shared content for all four. Migrated verbatim at Dustin's request ahead of flipping those profiles to the clptr4p memory provider.",
+    "source": "~/.hermes/profiles/{assistant,planner,analyst,implementer}/memories/MEMORY.md"
+  },
+  "claims": [
+    {
+      "predicate": "hermes.setup",
+      "value": "terminal toolset NOT in config (only hermes-cli bundle); execute_code needs Docker daemon; sandbox image nikolaik/python-nodejs:python3.11-nodejs20; workspace /mnt/bro/thinktank bind-mounted; subagent role skills at ~/.hermes/skills/roles/<name>/SKILL.md",
+      "claim": "the Hermes sandbox runs the hermes-cli terminal bundle only, execute_code needs the Docker daemon, the sandbox image is nikolaik/python-nodejs:python3.11-nodejs20, /mnt/bro/thinktank is bind-mounted, and subagent role skills live at ~/.hermes/skills/roles/<name>/SKILL.md",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "tools.convention",
+      "value": "/mnt/bro/thinktank/tools/ holds compressed CLI packages plus manifest.toml; subagents extract locally in sandbox; pre-flight check manifest.toml status (blocked = fail task); weekly CVE scan + blocking hook pending; docs: tools/README.md and tools/CONVENTIONS.md",
+      "claim": "the ThinkTank tools/ convention is compressed CLI packages with a manifest.toml that subagents extract locally, a pre-flight manifest status check where blocked means fail the task, a pending weekly CVE scan and blocking hook, and docs in tools/README.md and tools/CONVENTIONS.md",
+      "confidence": 0.9,
+      "datatype": "string"
+    },
+    {
+      "predicate": "project.audio2midi",
+      "value": "/workspace/audio2midi (git submodule of /mnt/bro/thinktank); branch BrowserExtension = permanent release channel, never merged to trunk; docs in docs/plans/, docs/issues/, body-files/; Dustin sometimes types \"plas\" for \"plans\"",
+      "claim": "audio2midi lives at /workspace/audio2midi as a git submodule of ThinkTank, its BrowserExtension branch is a permanent release channel never merged to trunk, its docs live in docs/plans/, docs/issues/, and body-files/, and Dustin sometimes types \"plas\" for \"plans\"",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "skill.scanner",
+      "value": "the persistence-FP scanner blocks ANY patch to skills executing-plans-inline and subagent-driven-development (pre-existing token-cat / sandbox-path findings trip the re-scan); workaround: create sibling class-level skills; example: per-commit-review-cadence (software-development/)",
+      "claim": "the skill persistence scanner blocks any patch to executing-plans-inline and subagent-driven-development because pre-existing findings trip the re-scan, so sibling class-level skills are the workaround (e.g. per-commit-review-cadence under software-development/)",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "terminal.guard",
+      "value": "the Hermes terminal tool's foreground-& guard rejects any command containing '&' (bash background launch)",
+      "claim": "the Hermes terminal tool rejects foreground commands containing an ampersand via its foreground-& guard",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "browser.testing",
+      "value": "Dustin's browser environment can include both Brave and Google Chrome; audio2midi extension manual testing is specifically in Google Chrome, so use the Chrome NM path ~/.config/google-chrome/NativeMessagingHosts/ unless he says otherwise",
+      "claim": "manual testing of the audio2midi extension happens in Google Chrome, so use the Chrome native-messaging path ~/.config/google-chrome/NativeMessagingHosts/ even though Brave may also be installed",
+      "confidence": 0.9,
+      "datatype": "string"
+    },
+    {
+      "predicate": "daemon.spawn",
+      "value": "a2m-host.py must spawn the daemon via 'uv run python3 -m audio2midi.daemon' (NOT sys.executable) so it uses the uv venv Python with aiohttp; 'uv pip install' only checks the lockfile -- use 'uv sync' then 'uv run python3 -c \"import <pkg>\"' to verify",
+      "claim": "the audio2midi native host must spawn its daemon with 'uv run python3 -m audio2midi.daemon' rather than sys.executable so it uses the uv venv Python with aiohttp, and dependency installs should be verified with 'uv sync' plus an import check rather than 'uv pip install'",
+      "confidence": 0.95,
+      "datatype": "string"
+    },
+    {
+      "predicate": "ghcli.regression",
+      "value": "PIN (revisit ~Apr 2026): gh CLI is not in the nikolaik base image; tools/gh.tar.gz extracts but /tmp is noexec; a copy at /mnt/bro/thinktank/tools/gh-bin runs but GITHUB_TOKEN is empty in the sandbox so auth fails; likely fix: add GITHUB_TOKEN to docker_pass_env in ~/.hermes/config.yaml (same pattern as OBSIDIAN_VAULT_PATH); workaround: write issue/PR bodies to docs/issues/ or body-files/ and file from the host shell",
+      "claim": "gh CLI access from the sandbox is broken (not in the base image, /tmp is noexec, GITHUB_TOKEN is empty), the likely fix is adding GITHUB_TOKEN to docker_pass_env in ~/.hermes/config.yaml, and the workaround is writing issue/PR bodies to docs/issues/ or body-files/ and filing from the host shell",
+      "confidence": 0.9,
+      "datatype": "string"
+    }
+  ]
+}

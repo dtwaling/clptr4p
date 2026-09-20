@@ -100,13 +100,17 @@ under `FOR UPDATE`.
 
 ## Active policy
 
-**`personal/2`** (migration 011): purpose `retrieve.context`; selectors
+**`personal/3`** (migration 012): purpose `retrieve.context`; selectors
 `preferred_name`, `comm.style`, `formatting.rule`, `tech.stack`, `notes.tool`,
-`skill.rule`, `skill.cadence`, `project.active`, `repo.remote`; no actions;
-retention 3600s; onward disclosure forbidden. `default-deny` stays in the
-table as the fail-closed fallback (inactive). Verify with
-`gateway: deno task check:policy`.
+`skill.rule`, `skill.cadence`, `project.active`, `repo.remote`, plus the
+sixteen Hermes-profile-migration predicates (`hermes.setup`, `tools.convention`,
+`project.audio2midi`, `skill.scanner`, `terminal.guard`, `browser.testing`,
+`daemon.spawn`, `ghcli.regression`, `skill.authoring`, `github.ops`,
+`gateway.setup`, `ob1l.legacy`, `desktop.quirks`, `profile.rule`,
+`kanban.dispatcher`, `clptr4p.ops`); no actions; retention 3600s; onward
+disclosure forbidden. `default-deny` stays in the table as the fail-closed
+fallback (inactive). Verify with `gateway: deno task check:policy`.
 
 Note: `policies` enforces exactly one active row -- "additional policies" are
-versioned swaps (e.g. a future `personal/2` or `workspace/1`), not stacked
+versioned swaps (e.g. a future `personal/3` or `workspace/1`), not stacked
 policies.

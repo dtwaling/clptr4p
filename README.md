@@ -140,7 +140,8 @@ the prior active policy and delete their own data, so runs leave zero residue.
 ## Status
 
 In production use as the memory backend for a Hermes agent rig
-(`personal/2` policy, human-reviewed claims, migrated from Honcho).
+(`personal/3` policy, human-reviewed claims, migrated from Honcho and the
+Hermes profile memory files).
 Protocol surface follows context-layer/0.2-draft; expect rough edges and
 schema changes. Not yet: real action executors behind `context_act`, AAA
 `/.well-known` handshake, semantic (vector) retrieval as a policy capability.
