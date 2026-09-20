@@ -25,7 +25,7 @@ NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 LATER=$(date -u -d '+2 hours' +%Y-%m-%dT%H:%M:%SZ)
 PAST=$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)
 GRANTED_PREDICATE="hermes.setup"   # granted by the real active policy
-DENO=/home/dtdubs/.deno/bin/deno
+DENO="${CLPTR4P_DENO:-$HOME/.deno/bin/deno}"
 
 cleanup() {
   cat <<SQL | $DENO run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /dev/null

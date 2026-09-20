@@ -36,6 +36,9 @@ REVIEWER_PASSWORD=${REVIEWER_PASS}
 # Encryption Key for payload_encrypted and HMACs
 VAULT_DEK=${VAULT_DEK}
 
+# Reviewer identity stamped on your review decisions -- EDIT ME
+REVIEWER_PRINCIPAL=urn:user:you
+
 # Connection strings
 DATABASE_URL=postgres://clptr4p_admin:${ADMIN_PASS}@127.0.0.1:5433/clptr4p
 GATEWAY_DATABASE_URL=postgres://clptr4p_gateway:${GATEWAY_PASS}@127.0.0.1:5433/clptr4p

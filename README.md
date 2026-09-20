@@ -63,6 +63,10 @@ capture (CLI/agent)                           agents (MCP clients, e.g. Hermes)
 
 Requirements: Docker, Deno, an OpenRouter API key (for embeddings).
 
+**New install? Follow [docs/SETUP.md](docs/SETUP.md) -- the complete
+fresh-install path: secrets, vault bootstrap, MCP wiring, Hermes integration,
+first memories, smoke tests.** The condensed version:
+
 ```
 cd vault
 ./bootstrap.sh                    # writes .env with random secrets + DEK

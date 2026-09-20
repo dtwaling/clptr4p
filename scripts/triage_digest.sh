@@ -8,5 +8,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/../vault"
 set -a; . ./.env; set +a
-exec /home/dtdubs/.deno/bin/deno run --allow-net=127.0.0.1:5433 \
+DENO="${CLPTR4P_DENO:-$HOME/.deno/bin/deno}"
+exec "$DENO" run --allow-net=127.0.0.1:5433 \
   --allow-env --allow-read=.,capture triage.ts --format digest

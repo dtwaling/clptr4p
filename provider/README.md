@@ -19,15 +19,19 @@ to memory.
 
 ## Install
 
+See [docs/SETUP.md](../docs/SETUP.md) for the full fresh-install path
+(vault bootstrap, secrets, MCP wiring, verification). The short version:
+
 The provider is discovered as a user plugin at `~/.hermes/plugins/clptr4p/`
 (copy of `provider/__init__.py`). Requires in `~/.hermes/.env`:
 
 - `GATEWAY_DATABASE_URL` (same value as `vault/.env`)
 - `VAULT_DEK`
+- `OPENROUTER_API_KEY` (embeddings; approve/ingest fail without it)
 
-Optional env: `CLPTR4P_SELECTORS` (prefetch predicates, default
-`preferred_name,comm.style,formatting.rule`), `CLPTR4P_SUBJECT`,
-`CLPTR4P_DENO`, `CLPTR4P_GATEWAY_ENTRY`.
+Optional env: `CLPTR4P_SELECTORS` (prefetch predicates; default is the full
+granted set of the shipped starter policy), `CLPTR4P_SUBJECT`, `CLPTR4P_DENO`,
+`CLPTR4P_GATEWAY_ENTRY`.
 
 ## Activate
 
@@ -36,9 +40,31 @@ memory:
   provider: clptr4p   # replaces honcho; exactly one external provider
 ```
 
+And the MCP server entry in `~/.hermes/config.yaml` (this is what hands the
+gateway its DB access -- the role password inside the URL is the access key;
+there is no separate MCP token):
+
+```yaml
+mcp_servers:
+  clptr4p:
+    command: /home/you/.deno/bin/deno
+    args:
+      - run
+      - --allow-read=/path/to/clptr4p/gateway,/path/to/clptr4p/context-layer-reference
+      - --allow-write=/path/to/clptr4p/vault/data
+      - --allow-env
+      - --allow-net=127.0.0.1:5433
+      - /path/to/clptr4p/gateway/main.ts
+    cwd: /path/to/clptr4p/gateway
+    env:
+      GATEWAY_DATABASE_URL: ${GATEWAY_DATABASE_URL}
+      VAULT_DEK: ${VAULT_DEK}
+    timeout: 60
+```
+
 Restart Hermes (gateway restart or CLI relaunch). The active policy must
-grant `retrieve.context` for the selectors you want in prefetch (`personal/1`
-does).
+grant `retrieve.context` for the selectors you want in prefetch (the shipped
+starter policy does).
 
 ## Review queue
 
