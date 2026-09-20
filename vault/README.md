@@ -68,15 +68,22 @@ deno run ... search.ts "query text" [--limit N] [--min-sim 0.75]   # admin-side 
 ## Proposal review (human gate)
 
 Agents submit `memory_propose` via the gateway; proposals land in the
-`proposals` table with status `pending_validation`. You review:
+`proposals` table with status `pending_validation`. The one-command wrapper
+(sources `.env` itself):
+
+```
+../scripts/review.sh list
+../scripts/review.sh show <id>
+../scripts/review.sh approve <id>
+../scripts/review.sh reject <id> --reason "text"
+```
+
+Equivalent raw invocations:
 
 ```
 set -a; . ./.env; set +a
 REVIEWER_PRINCIPAL="urn:user:dtdubs" deno run --allow-net=127.0.0.1:5433 \
   --allow-env --allow-read=.,capture review.ts list
-REVIEWER_PRINCIPAL="urn:user:dtdubs" deno run ... review.ts show <id>
-REVIEWER_PRINCIPAL="urn:user:dtdubs" deno run ... review.ts approve <id>
-REVIEWER_PRINCIPAL="urn:user:dtdubs" deno run ... review.ts reject <id> --reason "text"
 ```
 
 Approving mints an encrypted decision `source_event` (origin `review`), commits
@@ -84,6 +91,32 @@ the proposed claims with provenance to that event, applies `add_or_contradict`
 supersede semantics, and flips the proposal to `committed` -- one transaction.
 Double-approve and expired proposals are rejected; the status re-check runs
 under `FOR UPDATE`.
+
+### Auto-triage (`triage.ts`)
+
+`vault/triage.ts` closes the dead weight so only real candidates reach your
+eyes. It may **only reject** -- and rejection commits zero claims by design,
+so automated closing can never bypass the human gate. Approval stays
+human-only, always.
+
+```
+deno run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,capture triage.ts            # apply
+deno run ... triage.ts --dry-run                                                           # preview
+deno run ... triage.ts --format digest                                                     # digest (silent when idle)
+```
+
+Deterministic rules, first match wins: **expired** (past `expires_at`), **empty**
+(no claims), **ungranted** (a predicate outside the active policy's
+`allowed_selectors` -- approval could never serve it), **duplicate** (every
+proposed claim already active verbatim -- approval would be a no-op). Malformed
+proposals are kept for the human, never auto-closed. Each close mints an
+encrypted decision event (reviewer `urn:cl:triage`) with the reason; rejected
+proposal rows and their content remain queryable.
+
+`scripts/triage_digest.sh` runs triage in digest mode for a cron watchdog:
+empty output on an idle queue, so a no-agent cron job only messages you when
+something needs eyes (or was closed). `gateway/tests/smoke_triage.sh` covers
+the whole surface against the real active policy.
 
 ## Ops helpers
 

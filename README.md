@@ -88,7 +88,13 @@ cd vault
 REVIEWER_PRINCIPAL="urn:user:you" deno run --allow-net=127.0.0.1:5433 \
   --allow-env --allow-read=.,capture review.ts list
 REVIEWER_PRINCIPAL="urn:user:you" deno run ... review.ts approve <id>
+# or: ../scripts/review.sh list | show | approve | reject
 ```
+
+`vault/triage.ts` auto-closes the dead weight first (expired, ungranted
+predicate, verbatim duplicate) -- reject-only, so it can never bypass the
+human gate. `scripts/triage_digest.sh` is the cron watchdog entry point:
+silent on an idle queue, survivor digest otherwise.
 
 ## Roles (RBAC)
 
@@ -97,7 +103,7 @@ REVIEWER_PRINCIPAL="urn:user:you" deno run ... review.ts approve <id>
 | `clptr4p_admin` | everything (ops/migrations only) | everything |
 | `clptr4p_gateway` | claims, policies, bundles | decisions, bundles, receipts, proposals (insert-only); `bundles.consumed_at` update |
 | `clptr4p_capture` | claims, source events | claims, events, provenance; embedding updates |
-| `clptr4p_reviewer` | proposals, claims | claims (approve), decision events (insert-only, cannot read raw evidence), proposal review columns |
+| `clptr4p_reviewer` | proposals, claims, policies | claims (approve), decision events (insert-only, cannot read raw evidence), proposal review columns |
 
 The gateway role cannot read `source_events`; the reviewer can append but
 never read them. Receipts are append-only (DB trigger). All verified by

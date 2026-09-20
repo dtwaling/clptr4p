@@ -47,6 +47,11 @@ agent -> memory_propose  -> human review -> approved claims (or nothing)
   - `review.ts` -- human review CLI. Approve = encrypted decision event +
     claims + provenance + inline embedding, one txn. Reject = decision event
     only, zero claims.
+  - `triage.ts` -- auto-triage for the review queue. REJECT-ONLY (rejection
+    commits zero claims, so it can never bypass the human gate). Rules:
+    expired / empty / ungranted predicate / verbatim duplicate. Digest mode
+    is silent on an idle queue; `scripts/triage_digest.sh` is the cron entry
+    point, `scripts/review.sh` the human wrapper.
   - `verify_rbac.ts` -- live privilege-boundary test for all roles. Run it
     after touching any grant.
   - `embed.ts` / `search.ts` -- backfill CLI / admin similarity search. Agents

@@ -118,7 +118,7 @@ async function testReviewerRole() {
     await expectDenied("reviewer: select source_events", () => sql`SELECT count(*) FROM source_events`);
     await expectDenied("reviewer: update source_events", () =>
       sql`UPDATE source_events SET visibility = 'x' WHERE false`);
-    await expectDenied("reviewer: select policies", () => sql`SELECT count(*) FROM policies`);
+    await expectAllowed("reviewer: select policies", () => sql`SELECT count(*) FROM policies`);
     await expectDenied("reviewer: insert decisions", () =>
       sql`INSERT INTO decisions (id, request_ref, decision, reason_codes, decision_json) VALUES ('x','r','d','{}','{}')`);
     await expectDenied("reviewer: select receipts", () => sql`SELECT count(*) FROM receipts`);
