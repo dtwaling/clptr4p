@@ -162,3 +162,42 @@ bash tests/check_policy.sh
 Expect `... OK` from each. For the triage layer: `bash tests/smoke_triage.sh`
 (note: triage processes the whole pending queue, so a run also closes any
 real dead-on-arrival proposals -- that is the point).
+
+## 6. Backup and restore
+
+```
+scripts/vault_backup.sh                     # -> vault/backups/clptr4p-vault-<ts>.tar.gz.enc
+scripts/vault_restore.sh --list <file>      # manifest + row counts, no writes
+scripts/vault_restore.sh --add <file>       # non-destructive merge (add-or-keep)
+scripts/vault_restore.sh --replace <file>   # destructive rebuild (confirmed)
+```
+
+A backup contains `vault.pgdump` (schema + data + embeddings, pg_dump custom
+format), `env.txt` (a copy of `vault/.env` -- login-role passwords are
+cluster-level and NOT carried by a dump, so the backup ships them to be
+self-sufficient), and a manifest. The tar.gz is encrypted with openssl
+AES-256-CBC/PBKDF2 (600k iterations) with a sha256 sidecar; `--keep N`
+prunes to the newest N (default 30).
+
+Passphrase: `VAULT_BACKUP_PASSPHRASE` if set, else `VAULT_DEK`. The DEK
+fallback means a backup is decryptable wherever `vault/.env` exists -- fine
+for local copies, but for off-machine disaster recovery set an independent
+`VAULT_BACKUP_PASSPHRASE` so one leaked file does not open both doors.
+
+- `--add` merges missing rows into the live vault (`ON CONFLICT DO NOTHING`;
+  live rows always win). Backup policies import **inactive** so the live
+  active policy stays active. Idempotent: re-running against the same vault
+  is a no-op. The merge runs via postgres_fdw against a scratch DB, fully
+  transactional with ON_ERROR_STOP.
+- `--replace` renames the live DB aside, restores into a fresh DB, re-runs
+  migrations, and drops the old DB only on success (failed pg_restore rolls
+  back to the pre-restore state). It terminates live connections first (the
+  gateway reconnects). If the backup's `.env` differs from yours (fresh
+  machine), the script prints how to align the login-role passwords.
+
+Vault zone integrity note: `--replace` uses `--no-owner` restores into an
+admin-owned database, then migrate.ts; RBAC grants are carried in the dump.
+Run `deno run ... verify_rbac.ts` after any restore.
+
+Backups contain vault secrets: `vault/backups/` is gitignored -- keep the
+destination private and 0600.
