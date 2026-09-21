@@ -112,9 +112,13 @@ full granted set of the shipped starter policy).
 Verify the integration end to end:
 
 ```
-HERMES_HOME=~/.hermes python3 scripts/verify_provider.py
+set -a; . vault/.env; set +a
+HERMES_HOME=~/.hermes uv run --script scripts/verify_provider.py
 # expect: PROVIDER VERIFY OK
 ```
+
+`verify_provider.py` has isolated uv script metadata for its `pyyaml`
+dependency. This keeps the health-check dependency out of the vault runtime.
 
 ## 4. First memories + review workflow
 

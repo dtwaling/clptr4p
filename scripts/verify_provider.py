@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "pyyaml>=6.0,<7",
+# ]
+# ///
 """End-to-end verification of the clptr4p Hermes memory provider.
 
 Exercises the installed provider (Hermes plugin discovery) against the live
