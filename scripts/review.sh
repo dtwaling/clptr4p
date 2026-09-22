@@ -5,10 +5,12 @@
 #   scripts/review.sh show <proposal-id>
 #   scripts/review.sh approve <proposal-id>
 #   scripts/review.sh reject <proposal-id> --reason "text"
+#   scripts/review.sh unpark <proposal-id>
+#   scripts/review.sh reject-parked [--subject <ref>] --reason "text"
 #
 # Sources vault/.env itself; set REVIEWER_PRINCIPAL there or pass
-# --reviewer <principal>. Run vault/triage.ts first to auto-close the
-# dead weight (expired / ungranted / duplicate).
+# --reviewer <principal>. Run vault/triage.ts first to park expired or
+# ungranted proposals and terminal-reject empty, malformed, or duplicate ones.
 set -euo pipefail
 cd "$(dirname "$0")/../vault"
 set -a; . ./.env; set +a

@@ -4,6 +4,8 @@
 //   deno run review.ts show <proposal-id> --reviewer <principal>
 //   deno run review.ts approve <proposal-id> --reviewer <principal>
 //   deno run review.ts reject <proposal-id> --reason "..." --reviewer <principal>
+//   deno run review.ts unpark <proposal-id> --reviewer <principal>
+//   deno run review.ts reject-parked --reason "..." --reviewer <principal>
 //
 // Approving mints a source_event recording the decision, commits the proposed
 // claims with provenance to that event, applies add_or_contradict supersede
@@ -26,7 +28,7 @@ async function hashId(prefix: string, ...parts: string[]): Promise<string> {
 }
 
 function usage(): never {
-  console.error("usage: review.ts list | show <id> | approve <id> | reject <id> --reason <text> [--reviewer <principal>]");
+  console.error("usage: review.ts list | show <id> | approve <id> | reject <id> --reason <text> | unpark <id> | reject-parked [--subject <ref>] --reason <text> [--reviewer <principal>]");
   Deno.exit(1);
 }
 
@@ -81,7 +83,7 @@ async function loadProposal(id: string): Promise<ProposalRow | undefined> {
   return row;
 }
 
-function assertReviewable(p: ProposalRow): void {
+function assertApprovable(p: ProposalRow): void {
   if (p.status !== "pending_validation") fail(`proposal is ${p.status}, not pending_validation`);
   const expiresAt = p.proposal_json.expires_at ? Date.parse(p.proposal_json.expires_at) : NaN;
   if (Number.isNaN(expiresAt)) fail("proposal has no parseable expires_at");
@@ -97,7 +99,7 @@ function assertReviewable(p: ProposalRow): void {
 async function listPending(): Promise<void> {
   const rows = await sql<ProposalRow[]>`
     SELECT id, subject_ref, status, proposal_json, created_at, reviewed_at, reviewer
-    FROM proposals WHERE status = 'pending_validation' ORDER BY created_at`;
+    FROM proposals WHERE status IN ('pending_validation', 'parked') ORDER BY created_at`;
   if (rows.length === 0) {
     console.log("no pending proposals");
     return;
@@ -107,7 +109,7 @@ async function listPending(): Promise<void> {
       .map((c) => `${c.predicate}=${JSON.stringify(c.object.value)}@${c.confidence}`).join(", ");
     console.log(`${p.id}`);
     console.log(`  subject:  ${p.subject_ref}`);
-    console.log(`  op:       ${p.proposal_json.operation ?? "add"}`);
+    console.log(`  status:   ${p.status}  op: ${p.proposal_json.operation ?? "add"}`);
     console.log(`  claims:   ${claims}`);
     console.log(`  by:       ${p.proposal_json.submitted_by ?? "?"}  expires: ${p.proposal_json.expires_at ?? "?"}`);
     console.log(`  why:      ${p.proposal_json.rationale ?? "(no rationale)"}`);
@@ -125,7 +127,10 @@ async function show(id: string): Promise<void> {
 async function commit(id: string, action: "committed" | "rejected", reason?: string): Promise<void> {
   const p = await loadProposal(id);
   if (!p) fail(`proposal ${id} not found`);
-  assertReviewable(p);
+  if (action === "committed") assertApprovable(p);
+  if (action === "rejected" && p.status !== "pending_validation" && p.status !== "parked") {
+    fail(`proposal is ${p.status}, not pending_validation or parked`);
+  }
 
   const now = new Date();
   const nowIso = now.toISOString();
@@ -140,7 +145,10 @@ async function commit(id: string, action: "committed" | "rejected", reason?: str
   await sql.begin(async (tx) => {
     // Re-check under lock; another reviewer may have just acted.
     const [fresh] = await tx`SELECT status FROM proposals WHERE id = ${id} FOR UPDATE`;
-    if (fresh.status !== "pending_validation") throw new Error(`proposal is already ${fresh.status}`);
+    if (action === "committed" && fresh.status !== "pending_validation") throw new Error(`proposal is already ${fresh.status}`);
+    if (action === "rejected" && fresh.status !== "pending_validation" && fresh.status !== "parked") {
+      throw new Error(`proposal is already ${fresh.status}`);
+    }
 
     // Plain INSERT: the status re-check under FOR UPDATE makes minting the same
     // decision event twice impossible, and no SELECT grant is needed (which
@@ -202,6 +210,18 @@ async function commit(id: string, action: "committed" | "rejected", reason?: str
   console.log(`${action} ${id} (event ${eventId}, ${claimCount} claim(s))`);
 }
 
+async function unpark(id: string): Promise<void> {
+  const p = await loadProposal(id);
+  if (!p) fail(`proposal ${id} not found`);
+  if (p.status !== "parked") fail(`proposal is ${p.status}, not parked`);
+  await sql.begin(async (tx) => {
+    const [fresh] = await tx`SELECT status FROM proposals WHERE id = ${id} FOR UPDATE`;
+    if (!fresh || fresh.status !== "parked") throw new Error(`proposal is already ${fresh?.status ?? "gone"}`);
+    await tx`UPDATE proposals SET status = 'pending_validation' WHERE id = ${id}`;
+  });
+  console.log(`unparked ${id}`);
+}
+
 try {
   switch (cmd) {
     case "list":
@@ -217,6 +237,23 @@ try {
       const idx = rest.indexOf("--reason");
       const reason = idx >= 0 ? rest[idx + 1] : undefined;
       await commit(rest[0] ?? usage(), "rejected", reason);
+      break;
+    }
+    case "unpark":
+      await unpark(rest[0] ?? usage());
+      break;
+    case "reject-parked": {
+      const idx = rest.indexOf("--reason");
+      const reason = idx >= 0 ? rest[idx + 1] : undefined;
+      const subjectIdx = rest.indexOf("--subject");
+      const subject = subjectIdx >= 0 ? rest[subjectIdx + 1] : undefined;
+      if (!reason) usage();
+      if (subjectIdx >= 0 && !subject) usage();
+      const rows = subject
+        ? await sql<ProposalRow[]>`SELECT id FROM proposals WHERE status = 'parked' AND subject_ref = ${subject} ORDER BY created_at`
+        : await sql<ProposalRow[]>`SELECT id FROM proposals WHERE status = 'parked' ORDER BY created_at`;
+      for (const p of rows) await commit(p.id, "rejected", reason);
+      console.log(`cleared ${rows.length} parked proposal(s)`);
       break;
     }
     default:

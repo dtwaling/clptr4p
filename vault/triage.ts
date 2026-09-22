@@ -8,15 +8,15 @@
 //   deno run triage.ts --format digest # survivor digest; silent when idle
 //
 // Rules (deterministic, first match wins):
-//   expired   -- past expires_at: the human CLI can no longer act on it, so
-//                it would sit in the queue forever.
+//   expired   -- past expires_at: park it; expiry is not deletion.
 //   empty     -- no proposed claims: nothing to commit.
 //   ungranted -- a predicate outside the active policy's allowed_selectors:
-//                even approval could never serve the claim.
+//                park it; a later policy can make it useful.
 //   duplicate -- every proposed claim already exists as an active claim
 //                (same subject, predicate, value): approval would be a no-op.
-// Anything else survives for human review. Malformed proposals (unparseable
-// expires_at, non-array claims) are kept and flagged, never auto-closed.
+//   malformed -- malformed claim payload: nothing safe can act on it.
+// Anything else survives for human review. An unparseable expiry is parked so
+// the human can reject it; it must never become an unclosable queue entry.
 
 import postgres from "npm:postgres@3.4.5";
 import { encryptPayload } from "./capture/crypto.ts";
@@ -51,7 +51,8 @@ interface ProposalRow {
 }
 
 interface Decision {
-  rule: "expired" | "empty" | "ungranted" | "duplicate";
+  rule: "expired" | "empty" | "ungranted" | "duplicate" | "malformed";
+  action: "park" | "reject";
   reason: string;
 }
 
@@ -97,17 +98,22 @@ async function activeClaims(subject: string): Promise<Map<string, string>> {
 async function decide(p: ProposalRow, granted: Set<string>): Promise<Decision | null> {
   const expiresAt = p.proposal_json.expires_at ? Date.parse(p.proposal_json.expires_at) : NaN;
   if (!Number.isNaN(expiresAt) && Date.now() >= expiresAt) {
-    return { rule: "expired", reason: "auto-triage: expired before review" };
+    return { rule: "expired", action: "park", reason: "auto-triage: expired before review" };
+  }
+  if (p.proposal_json.expires_at && Number.isNaN(expiresAt)) {
+    return { rule: "expired", action: "park", reason: "auto-triage: unparseable expiry requires human review" };
   }
   const claims = Array.isArray(p.proposal_json.proposed_claims) ? p.proposal_json.proposed_claims : null;
-  if (!claims) return null; // malformed -- keep for the human
+  if (!claims || claims.some((c) => !c || typeof c.predicate !== "string" || !c.object || !("value" in c.object))) {
+    return { rule: "malformed", action: "reject", reason: "auto-triage: malformed proposed_claims payload" };
+  }
   if (claims.length === 0) {
-    return { rule: "empty", reason: "auto-triage: proposal contains no claims" };
+    return { rule: "empty", action: "reject", reason: "auto-triage: proposal contains no claims" };
   }
   const ungranted = [...new Set(claims.map((c) => c.predicate))].filter((pred) => !granted.has(pred));
   if (ungranted.length > 0) {
     return {
-      rule: "ungranted",
+      rule: "ungranted", action: "park",
       reason: `auto-triage: predicate(s) not granted by active policy: ${ungranted.join(", ")} (claim could never serve)`,
     };
   }
@@ -117,7 +123,7 @@ async function decide(p: ProposalRow, granted: Set<string>): Promise<Decision | 
     return values !== undefined && values.includes(norm(c.object?.value));
   });
   if (allDupes) {
-    return { rule: "duplicate", reason: "auto-triage: verbatim duplicate of active claim(s) -- approval would be a no-op" };
+    return { rule: "duplicate", action: "reject", reason: "auto-triage: verbatim duplicate of active claim(s) -- approval would be a no-op" };
   }
   return null;
 }
@@ -143,6 +149,16 @@ async function close(p: ProposalRow, reason: string): Promise<string> {
   return eventId;
 }
 
+async function park(p: ProposalRow): Promise<void> {
+  await sql.begin(async (tx) => {
+    const [fresh] = await tx`SELECT status FROM proposals WHERE id = ${p.id} FOR UPDATE`;
+    if (!fresh || fresh.status !== "pending_validation") {
+      throw new Error(`proposal is already ${fresh?.status ?? "gone"}`);
+    }
+    await tx`UPDATE proposals SET status = 'parked' WHERE id = ${p.id}`;
+  });
+}
+
 function shortClaims(p: ProposalRow): string {
   return (p.proposal_json.proposed_claims ?? [])
     .map((c) => `${c.predicate}=${JSON.stringify(c.object?.value)}`)
@@ -161,7 +177,7 @@ try {
   }
 
   const granted = await loadActiveSelectors();
-  const counts = { expired: 0, empty: 0, ungranted: 0, duplicate: 0 };
+  const counts = { expired: 0, empty: 0, ungranted: 0, duplicate: 0, malformed: 0 };
   const survivors: ProposalRow[] = [];
 
   for (const p of pending) {
@@ -179,21 +195,33 @@ try {
     }
     counts[d.rule]++;
     if (dryRun) {
-      console.log(`would reject ${p.id} -- ${d.reason}`);
+      console.log(`would ${d.action} ${p.id} -- ${d.reason}`);
       continue;
     }
-    const eventId = await close(p, d.reason);
-    console.log(`rejected ${p.id} (event ${eventId}) -- ${d.reason}`);
+    if (d.action === "park") {
+      await park(p);
+      console.log(`parked ${p.id} -- ${d.reason}`);
+    } else {
+      const eventId = await close(p, d.reason);
+      console.log(`rejected ${p.id} (event ${eventId}) -- ${d.reason}`);
+    }
   }
 
-  const closed = counts.expired + counts.empty + counts.ungranted + counts.duplicate;
+  const closed = counts.empty + counts.duplicate + counts.malformed;
+  const parked = counts.expired + counts.ungranted;
 
   if (format === "digest") {
-    if (closed === 0 && survivors.length === 0) Deno.exit(0); // idle: print nothing
+    if (closed === 0 && parked === 0 && survivors.length === 0) Deno.exit(0); // idle: print nothing
     const parts: string[] = [];
     if (closed > 0) {
       const breakdown = Object.entries(counts).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`).join(", ");
       parts.push(`clptr4p auto-triage closed ${closed} proposal(s) (${breakdown}).`);
+    }
+    if (parked > 0) {
+      const breakdown: [string, number][] = [["expired", counts.expired], ["ungranted", counts.ungranted]];
+      const nonzero = breakdown
+        .filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`).join(", ");
+      parts.push(`clptr4p auto-triage parked ${parked} proposal(s) (${nonzero}).`);
     }
     if (survivors.length > 0) {
       parts.push(`${survivors.length} proposal(s) need your eyes:`);
@@ -206,7 +234,7 @@ try {
     }
     console.log(parts.join("\n"));
   } else {
-    console.log(`\nauto-closed ${closed} (expired ${counts.expired}, empty ${counts.empty}, ungranted ${counts.ungranted}, duplicate ${counts.duplicate})`);
+    console.log(`\nauto-closed ${closed} (empty ${counts.empty}, duplicate ${counts.duplicate}, malformed ${counts.malformed}); parked ${parked} (expired ${counts.expired}, ungranted ${counts.ungranted})`);
     console.log(`survivors (need human review): ${survivors.length}`);
     for (const p of survivors) {
       console.log(`  ${p.id}`);
