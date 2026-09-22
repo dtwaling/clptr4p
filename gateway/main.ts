@@ -32,7 +32,7 @@ type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean
 const ok = (payload: unknown): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] });
 const fail = (message: string): ToolResult => ({ content: [{ type: "text", text: message }], isError: true });
 
-async function handleContextRequest(ctxReq: Json): Promise<ToolResult> {
+async function handleContextRequest(ctxReq: Json, prefetchCoreOnly = false): Promise<ToolResult> {
   const validation = validateContextRequest(ctxReq);
   if (!validation.valid) return fail(`Invalid request: ${JSON.stringify(validation.errors)}`);
 
@@ -46,7 +46,9 @@ async function handleContextRequest(ctxReq: Json): Promise<ToolResult> {
   }
 
   const granted = (decision.granted_selectors ?? []).map((s: { predicate: string }) => s.predicate);
-  const claims = await store.claims.select(ctxReq.subject_ref, granted);
+  // Core filtering happens after policy grants and subject scoping, so it can
+  // only reduce the context disclosed to a provider prefetch.
+  const claims = await store.claims.select(ctxReq.subject_ref, granted, prefetchCoreOnly ? "core" : undefined);
   const bundle = issueScopedBundle({ request: ctxReq, decision, claims, issuer: GATEWAY_ID });
 
   const now = new Date().toISOString();
@@ -110,7 +112,10 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
       description: "Request context for a specific purpose. Returns a PolicyDecision and, if allowed, a Scoped Context Bundle.",
       inputSchema: {
         type: "object",
-        properties: { request: { type: "object", description: "context_request object (context-layer/0.2-draft)" } },
+        properties: {
+          request: { type: "object", description: "context_request object (context-layer/0.2-draft)" },
+          prefetch_core_only: { type: "boolean", description: "Restrict a provider prefetch to human-stamped core claims." },
+        },
         required: ["request"],
       },
     },
@@ -145,7 +150,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: Json) => {
     assertNoSecretFields(args, "tool arguments");
     switch (request.params.name) {
       case "context_request":
-        return await handleContextRequest(args.request);
+        return await handleContextRequest(args.request, args.prefetch_core_only === true);
       case "context_act":
         return await handleContextAct(args.bundle_id, args.action, args.payload);
       case "memory_propose":

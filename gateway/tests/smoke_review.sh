@@ -106,7 +106,7 @@ echo "  listed ok"
 
 echo "--- 3. Reviewer approves ---"
 APP=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
-  deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts approve "urn:cl:proposal:$RUN_ID-hermes")
+  deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts approve "urn:cl:proposal:$RUN_ID-hermes" --tier core)
 echo "  $APP"
 echo "$APP" | grep -q "committed" || { echo "FAIL: approve"; exit 1; }
 

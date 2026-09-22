@@ -111,6 +111,8 @@ async function testReviewerRole() {
           VALUES ('rev_test_claim', 's', 'p', 'c', '{}'::jsonb, 0.5) ON CONFLICT DO NOTHING`);
     await expectAllowed("reviewer: update proposals.status", () =>
       sql`UPDATE proposals SET status = status WHERE false`);
+    await expectAllowed("reviewer: update proposals.proposed_tier", () =>
+      sql`UPDATE proposals SET proposed_tier = proposed_tier WHERE false`);
     await expectDenied("reviewer: insert proposals", () =>
       sql`INSERT INTO proposals (id, subject_ref, status, proposal_json) VALUES ('x', 's', 'p', '{}')`);
     await expectDenied("reviewer: update proposals.proposal_json", () =>
@@ -119,6 +121,8 @@ async function testReviewerRole() {
     await expectDenied("reviewer: update source_events", () =>
       sql`UPDATE source_events SET visibility = 'x' WHERE false`);
     await expectAllowed("reviewer: select policies", () => sql`SELECT count(*) FROM policies`);
+    await expectAllowed("reviewer: update claims.injection_tier", () =>
+      sql`UPDATE claims SET injection_tier = injection_tier WHERE false`);
     await expectDenied("reviewer: insert decisions", () =>
       sql`INSERT INTO decisions (id, request_ref, decision, reason_codes, decision_json) VALUES ('x','r','d','{}','{}')`);
     await expectDenied("reviewer: select receipts", () => sql`SELECT count(*) FROM receipts`);

@@ -105,9 +105,10 @@ memory:
 ```
 
 The provider also honors `CLPTR4P_DENO`, `CLPTR4P_GATEWAY_ENTRY`,
-`CLPTR4P_SUBJECT` (default `vault://subjects/primary`), and
-`CLPTR4P_SELECTORS` (comma list of predicates to prefetch; default is the
-full granted set of the shipped starter policy).
+`CLPTR4P_SUBJECT` (default `vault://subjects/primary`),
+`CLPTR4P_SELECTORS` (comma list of predicates to prefetch), and
+`CLPTR4P_PREFETCH_MAX_CHARS` (default `11000`). Prefetch receives only
+human-stamped `core` claims under the existing policy grant.
 
 Verify the integration end to end:
 
@@ -138,7 +139,7 @@ Review the queue (one command; sources `vault/.env` itself):
 ```
 scripts/review.sh list
 scripts/review.sh show <id>
-scripts/review.sh approve <id>
+scripts/review.sh approve <id> --tier core  # explicit human prefetch stamp
 scripts/review.sh reject <id> --reason "text"
 ```
 
@@ -148,6 +149,11 @@ construction, so it can never bypass your approval):
 ```
 scripts/triage_digest.sh    # daily digest form; silent on an idle queue
 ```
+
+New claims default to `archive`; only a human `approve --tier core` can place
+them in provider prefetch. To classify existing active claims once, run
+`deno run --allow-net=127.0.0.1:5433 --allow-env scripts/backfill_injection_tiers.ts`
+from the repository root and choose `core` or `archive` for each prompt.
 
 For a daily nudge, schedule `scripts/triage_digest.sh` as a no-agent cron job:
 empty stdout sends nothing, survivors arrive with ready-to-paste commands.

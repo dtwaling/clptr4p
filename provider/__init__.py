@@ -14,6 +14,7 @@ Config (env, resolved from ~/.hermes/.env):
   VAULT_DEK              vault data encryption key (required)
   CLPTR4P_SELECTORS      comma list of predicates to prefetch (optional;
                          default: preferred_name,comm.style,formatting.rule)
+  CLPTR4P_PREFETCH_MAX_CHARS  max prefetch characters (default: 11000)
   CLPTR4P_SUBJECT        subject_ref (default vault://subjects/primary)
   CLPTR4P_DENO           deno binary override
   CLPTR4P_GATEWAY_ENTRY  gateway main.ts override
@@ -48,6 +49,7 @@ _DEFAULT_DENO = "/home/dtdubs/.deno/bin/deno"
 _DEFAULT_ENTRY = "/mnt/bro/thinktank/clptr4p/gateway/main.ts"
 _PREFETCH_TTL_S = 60.0
 _CALL_TIMEOUT_S = 15.0
+_DEFAULT_PREFETCH_MAX_CHARS = 11000
 
 
 def _utcnow() -> str:
@@ -56,6 +58,8 @@ def _utcnow() -> str:
 
 def _iso_later(seconds: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 
 
 class _GatewayClient:
@@ -268,7 +272,7 @@ class Clptr4pMemoryProvider(MemoryProvider):
         if now - self._last_prefetch_at < _PREFETCH_TTL_S:
             return self._last_prefetch_text
         try:
-            claims = self._fetch_claims(self._selectors)
+            claims = self._fetch_claims(self._selectors, prefetch_core_only=True)
         except Exception as e:
             logger.warning("clptr4p prefetch failed: %s", e)
             return ""
@@ -277,11 +281,24 @@ class Clptr4pMemoryProvider(MemoryProvider):
             self._last_prefetch_text = ""
             self._last_recall_count = 0
             return ""
-        lines = ["Approved user context (clptr4p vault, reviewed claims):"]
+        lines = ["Approved user context (clptr4p vault, reviewed core claims):"]
+        max_chars = self._prefetch_max_chars()
+        if len(lines[0]) > max_chars:
+            logger.warning("clptr4p prefetch header exceeds %d-char budget; returning no context", max_chars)
+            self._last_prefetch_text = ""
+            self._last_recall_count = 0
+            return ""
+        dropped = 0
         for c in claims:
-            lines.append(f"- {c.get('claim', '')} [{c.get('predicate')} = {c.get('value')}]")
+            line = f"- {c.get('claim', '')} [{c.get('predicate')} = {c.get('value')}]"
+            if len("\n".join([*lines, line])) > max_chars:
+                dropped += 1
+                continue
+            lines.append(line)
+        if dropped:
+            logger.warning("clptr4p prefetch dropped %d oldest core claim(s) over %d-char budget", dropped, max_chars)
         self._last_prefetch_text = "\n".join(lines)
-        self._last_recall_count = len(claims)
+        self._last_recall_count = len(lines) - 1
         return self._last_prefetch_text
 
     def recall_status(self) -> Optional[RecallStatus]:
@@ -357,7 +374,7 @@ class Clptr4pMemoryProvider(MemoryProvider):
 
     # -- internals -----------------------------------------------------------
 
-    def _context_request(self, predicates: List[str]) -> Dict[str, Any]:
+    def _context_request(self, predicates: List[str], *, prefetch_core_only: bool = False) -> Dict[str, Any]:
         subject = os.environ.get("CLPTR4P_SUBJECT", _DEFAULT_SUBJECT)
         request = {
             "spec_version": "context-layer/0.2-draft",
@@ -381,15 +398,27 @@ class Clptr4pMemoryProvider(MemoryProvider):
             "receipt_requirement": {"level": "operation", "required": True},
             "expires_at": _iso_later(3600),
         }
-        return self._client.call("context_request", {"request": request})
+        return self._client.call("context_request", {"request": request, "prefetch_core_only": prefetch_core_only})
 
-    def _fetch_claims(self, predicates: List[str]) -> List[Dict[str, Any]]:
-        result = self._context_request(predicates)
+    def _fetch_claims(self, predicates: List[str], *, prefetch_core_only: bool = False) -> List[Dict[str, Any]]:
+        result = self._context_request(predicates, prefetch_core_only=prefetch_core_only)
         bundle = result.get("bundle") or {}
         claims = bundle.get("context") or []
         # Only keep the requested predicates the policy actually granted.
         wanted = set(predicates)
         return [c for c in claims if c.get("predicate") in wanted]
+
+    @staticmethod
+    def _prefetch_max_chars() -> int:
+        raw = os.environ.get("CLPTR4P_PREFETCH_MAX_CHARS", str(_DEFAULT_PREFETCH_MAX_CHARS))
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+        logger.warning("invalid CLPTR4P_PREFETCH_MAX_CHARS=%r; using %d", raw, _DEFAULT_PREFETCH_MAX_CHARS)
+        return _DEFAULT_PREFETCH_MAX_CHARS
 
     def _propose(self, predicate: str, value: str, claim: str, rationale: str) -> str:
         if not predicate or not value or not claim:
@@ -433,4 +462,6 @@ class Clptr4pMemoryProvider(MemoryProvider):
              "secret": True, "required": True, "env_var": "VAULT_DEK", "type": "text"},
             {"key": "selectors", "description": "Comma-separated predicates to prefetch",
              "required": False, "env_var": "CLPTR4P_SELECTORS", "type": "text"},
+            {"key": "prefetch_max_chars", "description": "Maximum characters injected by core prefetch",
+             "required": False, "env_var": "CLPTR4P_PREFETCH_MAX_CHARS", "type": "text"},
         ]

@@ -2,7 +2,7 @@
 //
 //   deno run review.ts list --reviewer <principal>
 //   deno run review.ts show <proposal-id> --reviewer <principal>
-//   deno run review.ts approve <proposal-id> --reviewer <principal>
+//   deno run review.ts approve <proposal-id> [--tier core|archive] --reviewer <principal>
 //   deno run review.ts reject <proposal-id> --reason "..." --reviewer <principal>
 //   deno run review.ts unpark <proposal-id> --reviewer <principal>
 //   deno run review.ts reject-parked --reason "..." --reviewer <principal>
@@ -28,7 +28,7 @@ async function hashId(prefix: string, ...parts: string[]): Promise<string> {
 }
 
 function usage(): never {
-  console.error("usage: review.ts list | show <id> | approve <id> | reject <id> --reason <text> | unpark <id> | reject-parked [--subject <ref>] --reason <text> [--reviewer <principal>]");
+  console.error("usage: review.ts list | show <id> | approve <id> [--tier core|archive] | reject <id> --reason <text> | unpark <id> | reject-parked [--subject <ref>] --reason <text> [--reviewer <principal>]");
   Deno.exit(1);
 }
 
@@ -36,6 +36,13 @@ const reviewerFlagIndex = rest.indexOf("--reviewer");
 const reviewerFromFlag = reviewerFlagIndex >= 0 ? rest[reviewerFlagIndex + 1] ?? usage() : undefined;
 if (reviewerFlagIndex >= 0) rest.splice(reviewerFlagIndex, 2);
 if (rest.includes("--reviewer")) usage();
+
+type InjectionTier = "core" | "archive";
+const tierFlagIndex = rest.indexOf("--tier");
+const tierFromFlag = tierFlagIndex >= 0 ? rest[tierFlagIndex + 1] ?? usage() : "archive";
+if (tierFlagIndex >= 0) rest.splice(tierFlagIndex, 2);
+if (rest.includes("--tier") || (tierFromFlag !== "core" && tierFromFlag !== "archive")) usage();
+const approvalTier = tierFromFlag as InjectionTier;
 
 function requireReviewer(): string {
   const reviewer = reviewerFromFlag ?? Deno.env.get("REVIEWER_PRINCIPAL");
@@ -74,11 +81,12 @@ interface ProposalRow {
   created_at: Date;
   reviewed_at: Date | null;
   reviewer: string | null;
+  proposed_tier: InjectionTier;
 }
 
 async function loadProposal(id: string): Promise<ProposalRow | undefined> {
   const [row] = await sql<ProposalRow[]>`
-    SELECT id, subject_ref, status, proposal_json, created_at, reviewed_at, reviewer
+    SELECT id, subject_ref, status, proposal_json, created_at, reviewed_at, reviewer, proposed_tier
     FROM proposals WHERE id = ${id}`;
   return row;
 }
@@ -98,7 +106,7 @@ function assertApprovable(p: ProposalRow): void {
 
 async function listPending(): Promise<void> {
   const rows = await sql<ProposalRow[]>`
-    SELECT id, subject_ref, status, proposal_json, created_at, reviewed_at, reviewer
+    SELECT id, subject_ref, status, proposal_json, created_at, reviewed_at, reviewer, proposed_tier
     FROM proposals WHERE status IN ('pending_validation', 'parked') ORDER BY created_at`;
   if (rows.length === 0) {
     console.log("no pending proposals");
@@ -109,7 +117,7 @@ async function listPending(): Promise<void> {
       .map((c) => `${c.predicate}=${JSON.stringify(c.object.value)}@${c.confidence}`).join(", ");
     console.log(`${p.id}`);
     console.log(`  subject:  ${p.subject_ref}`);
-    console.log(`  status:   ${p.status}  op: ${p.proposal_json.operation ?? "add"}`);
+    console.log(`  status:   ${p.status}  op: ${p.proposal_json.operation ?? "add"}  tier: ${p.proposed_tier}`);
     console.log(`  claims:   ${claims}`);
     console.log(`  by:       ${p.proposal_json.submitted_by ?? "?"}  expires: ${p.proposal_json.expires_at ?? "?"}`);
     console.log(`  why:      ${p.proposal_json.rationale ?? "(no rationale)"}`);
@@ -121,10 +129,10 @@ async function show(id: string): Promise<void> {
   const p = await loadProposal(id);
   if (!p) fail(`proposal ${id} not found`);
   console.log(JSON.stringify(p.proposal_json, null, 2));
-  console.log(`-- status: ${p.status}  reviewed_at: ${p.reviewed_at ?? "-"}  reviewer: ${p.reviewer ?? "-"}`);
+  console.log(`-- status: ${p.status}  tier: ${p.proposed_tier}  reviewed_at: ${p.reviewed_at ?? "-"}  reviewer: ${p.reviewer ?? "-"}`);
 }
 
-async function commit(id: string, action: "committed" | "rejected", reason?: string): Promise<void> {
+async function commit(id: string, action: "committed" | "rejected", reason?: string, tier: InjectionTier = "archive"): Promise<void> {
   const p = await loadProposal(id);
   if (!p) fail(`proposal ${id} not found`);
   if (action === "committed") assertApprovable(p);
@@ -136,7 +144,7 @@ async function commit(id: string, action: "committed" | "rejected", reason?: str
   const nowIso = now.toISOString();
 
   // Deterministic decision event: id stable per (proposal, reviewer, action).
-  const payload = { proposal_id: id, action, reviewer, reason: reason ?? null, approved_claims: action === "committed" ? (p.proposal_json.proposed_claims ?? []).map((c) => c.predicate) : [] };
+  const payload = { proposal_id: id, action, reviewer, reason: reason ?? null, injection_tier: action === "committed" ? tier : null, approved_claims: action === "committed" ? (p.proposal_json.proposed_claims ?? []).map((c) => c.predicate) : [] };
   const { digest, encrypted } = await encryptPayload(payload, dek);
   const eventId = await hashId("event", p.subject_ref, "review", reviewer, id, action, digest);
 
@@ -166,9 +174,9 @@ async function commit(id: string, action: "committed" | "rejected", reason?: str
       const claimText = `reviewer-approved proposal asserts ${c.predicate} is ${JSON.stringify(c.object.value)}`;
 
       await tx`
-        INSERT INTO claims (id, subject_ref, predicate, claim, value, datatype, confidence, valid_from)
+        INSERT INTO claims (id, subject_ref, predicate, claim, value, datatype, confidence, valid_from, injection_tier)
         VALUES (${claimId}, ${p.subject_ref}, ${c.predicate}, ${claimText}, ${sql.json(c.object.value as any)},
-                ${c.object.datatype ?? "json"}, ${c.confidence}, ${nowIso})
+                ${c.object.datatype ?? "json"}, ${c.confidence}, ${nowIso}, ${tier})
         ON CONFLICT (id) DO NOTHING`;
 
       committed.push({ id: claimId, claim: claimText, value: c.object.value });
@@ -203,7 +211,8 @@ async function commit(id: string, action: "committed" | "rejected", reason?: str
 
     await tx`
       UPDATE proposals
-      SET status = ${action}, reviewed_at = ${nowIso}, reviewer = ${reviewer}
+      SET status = ${action}, reviewed_at = ${nowIso}, reviewer = ${reviewer},
+          proposed_tier = CASE WHEN ${action} = 'committed' THEN ${tier} ELSE proposed_tier END
       WHERE id = ${id}`;
   });
 
@@ -231,7 +240,7 @@ try {
       await show(rest[0] ?? usage());
       break;
     case "approve":
-      await commit(rest[0] ?? usage(), "committed");
+      await commit(rest[0] ?? usage(), "committed", undefined, approvalTier);
       break;
     case "reject": {
       const idx = rest.indexOf("--reason");

@@ -28,16 +28,18 @@ class PgPolicy implements PolicySource {
 
 class PgClaims implements ClaimSource {
   constructor(private readonly sql: Sql) {}
-  async select(subjectRef: string, predicates: string[]): Promise<Claim[]> {
+  async select(subjectRef: string, predicates: string[], injectionTier?: "core"): Promise<Claim[]> {
     if (predicates.length === 0) return [];
     const rows = await this.sql<{ id: string; claim: string; predicate: string; value: string; confidence: number }[]>`
       SELECT id, claim, predicate, value, confidence
       FROM claims
       WHERE subject_ref = ${subjectRef}
         AND predicate = ANY(${predicates})
+        AND (${injectionTier ?? null}::text IS NULL OR injection_tier = ${injectionTier ?? null})
         AND superseded_by IS NULL
         AND (valid_from IS NULL OR valid_from <= now())
-        AND (valid_to IS NULL OR valid_to > now())`;
+        AND (valid_to IS NULL OR valid_to > now())
+      ORDER BY created_at ASC, id ASC`;
     // Provenance handle must be an opaque name (reference isName regex), not
     // the claim id. Derive a stable short digest so the bundle reveals nothing
     // about vault identifiers while remaining traceable server-side.

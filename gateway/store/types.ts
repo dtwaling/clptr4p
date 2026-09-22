@@ -36,7 +36,7 @@ export interface PolicySource {
 }
 
 export interface ClaimSource {
-  select(subjectRef: string, predicates: string[]): Promise<Claim[]>;
+  select(subjectRef: string, predicates: string[], injectionTier?: "core"): Promise<Claim[]>;
 }
 
 export interface BundleRepo {

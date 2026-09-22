@@ -121,8 +121,8 @@ SELECT id, subject_ref, origin, actor, occurred_at, captured_at, visibility, pay
 FROM restore_src.source_events
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO claims (id, subject_ref, predicate, claim, value, datatype, confidence, valid_from, valid_to, superseded_by, embedding, created_at)
-SELECT id, subject_ref, predicate, claim, value, datatype, confidence, valid_from, valid_to, superseded_by, embedding, created_at
+INSERT INTO claims (id, subject_ref, predicate, claim, value, datatype, confidence, valid_from, valid_to, superseded_by, embedding, created_at, injection_tier)
+SELECT id, subject_ref, predicate, claim, value, datatype, confidence, valid_from, valid_to, superseded_by, embedding, created_at, injection_tier
 FROM restore_src.claims
 ON CONFLICT (id) DO NOTHING;
 
@@ -140,8 +140,8 @@ INSERT INTO identity_bindings (principal, subject_ref, auth_method, created_at)
 SELECT principal, subject_ref, auth_method, created_at FROM restore_src.identity_bindings
 ON CONFLICT (principal) DO NOTHING;
 
-INSERT INTO proposals (id, subject_ref, status, proposal_json, reviewed_at, reviewer, created_at)
-SELECT id, subject_ref, status, proposal_json, reviewed_at, reviewer, created_at
+INSERT INTO proposals (id, subject_ref, status, proposal_json, reviewed_at, reviewer, created_at, proposed_tier)
+SELECT id, subject_ref, status, proposal_json, reviewed_at, reviewer, created_at, proposed_tier
 FROM restore_src.proposals
 ON CONFLICT (id) DO NOTHING;
 

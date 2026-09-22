@@ -3,7 +3,7 @@
 #
 #   scripts/review.sh list
 #   scripts/review.sh show <proposal-id>
-#   scripts/review.sh approve <proposal-id>
+#   scripts/review.sh approve <proposal-id> [--tier core|archive]
 #   scripts/review.sh reject <proposal-id> --reason "text"
 #   scripts/review.sh unpark <proposal-id>
 #   scripts/review.sh reject-parked [--subject <ref>] --reason "text"

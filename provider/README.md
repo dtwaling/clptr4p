@@ -30,8 +30,11 @@ The provider is discovered as a user plugin at `~/.hermes/plugins/clptr4p/`
 - `OPENROUTER_API_KEY` (embeddings; approve/ingest fail without it)
 
 Optional env: `CLPTR4P_SELECTORS` (prefetch predicates; default is the full
-granted set of the shipped starter policy), `CLPTR4P_SUBJECT`, `CLPTR4P_DENO`,
-`CLPTR4P_GATEWAY_ENTRY`.
+granted set of the shipped starter policy), `CLPTR4P_PREFETCH_MAX_CHARS`
+(default `11000`), `CLPTR4P_SUBJECT`, `CLPTR4P_DENO`, and
+`CLPTR4P_GATEWAY_ENTRY`. Prefetch returns only human-stamped `core` claims;
+all newly approved claims default to `archive` unless the reviewer explicitly
+runs `approve --tier core`.
 
 ## Activate
 
