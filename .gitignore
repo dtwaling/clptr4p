@@ -1,3 +1,4 @@
 .env
 *.key
 vault/data/
+scripts/__pycache__/

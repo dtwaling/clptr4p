@@ -38,10 +38,13 @@ async function handleContextRequest(ctxReq: Json, prefetchCoreOnly = false): Pro
 
   const policy = await store.policy.active();
   const decision = decideContextRequest(ctxReq, policy);
-  await store.audit.decision(decision);
 
-  if (decision.decision === "deny" || decision.decision === "needs_approval") return ok({ decision });
+  if (decision.decision === "deny" || decision.decision === "needs_approval") {
+    await store.audit.decision(decision);
+    return ok({ decision });
+  }
   if (decision.decision !== "allow" && decision.decision !== "allow_with_reductions") {
+    await store.audit.decision(decision);
     return fail(`Unhandled decision state: ${decision.decision}`);
   }
 
@@ -49,6 +52,23 @@ async function handleContextRequest(ctxReq: Json, prefetchCoreOnly = false): Pro
   // Core filtering happens after policy grants and subject scoping, so it can
   // only reduce the context disclosed to a provider prefetch.
   const claims = await store.claims.select(ctxReq.subject_ref, granted, prefetchCoreOnly ? "core" : undefined);
+
+  if (prefetchCoreOnly) {
+    const presentPredicates = new Set(claims.map((c: any) => c.predicate));
+    const missing = granted.filter((p: string) => !presentPredicates.has(p));
+    if (missing.length > 0) {
+      decision.transform_requirements = decision.transform_requirements || [];
+      for (const p of missing) {
+        if (!decision.transform_requirements.includes(`redact:${p}`)) {
+          decision.transform_requirements.push(`redact:${p}`);
+        }
+      }
+      decision.decision = "allow_with_reductions";
+    }
+  }
+
+  await store.audit.decision(decision);
+
   const bundle = issueScopedBundle({ request: ctxReq, decision, claims, issuer: GATEWAY_ID });
 
   const now = new Date().toISOString();
