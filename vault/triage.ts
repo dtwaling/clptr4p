@@ -12,8 +12,9 @@
 //   empty     -- no proposed claims: nothing to commit.
 //   ungranted -- a predicate outside the active policy's allowed_selectors:
 //                park it; a later policy can make it useful.
-//   duplicate -- every proposed claim already exists as an active claim
-//                (same subject, predicate, value): approval would be a no-op.
+//   duplicate -- every proposed claim already exists as an active claim, or a
+//                prior pending proposal has the same claims for the subject.
+//                The oldest pending proposal survives for human review.
 //   malformed -- malformed claim payload: nothing safe can act on it.
 // Anything else survives for human review. An unparseable expiry is parked so
 // the human can reject it; it must never become an unclosable queue entry.
@@ -95,6 +96,17 @@ async function activeClaims(subject: string): Promise<Map<string, string>> {
   return byPredicate;
 }
 
+// Pending claim signatures seen in this oldest-first run. This closes legacy
+// queue duplicates while deterministic provider ids prevent fresh retries.
+const pendingSignatures = new Set<string>();
+function pendingSignature(p: ProposalRow, claims: { predicate: string; object: { value: unknown } }[]): string {
+  const claimSignature = claims
+    .map((c) => `${JSON.stringify(c.predicate)}:${norm(c.object.value)}`)
+    .sort()
+    .join("|");
+  return `${JSON.stringify(p.subject_ref)}|${claimSignature}`;
+}
+
 async function decide(p: ProposalRow, granted: Set<string>): Promise<Decision | null> {
   const expiresAt = p.proposal_json.expires_at ? Date.parse(p.proposal_json.expires_at) : NaN;
   if (!Number.isNaN(expiresAt) && Date.now() >= expiresAt) {
@@ -117,6 +129,10 @@ async function decide(p: ProposalRow, granted: Set<string>): Promise<Decision | 
       reason: `auto-triage: predicate(s) not granted by active policy: ${ungranted.join(", ")} (claim could never serve)`,
     };
   }
+  const signature = pendingSignature(p, claims);
+  if (pendingSignatures.has(signature)) {
+    return { rule: "duplicate", action: "reject", reason: "auto-triage: verbatim duplicate of an older pending proposal -- oldest remains for human review" };
+  }
   const active = await activeClaims(p.subject_ref);
   const allDupes = claims.every((c) => {
     const values = active.get(c.predicate);
@@ -125,6 +141,7 @@ async function decide(p: ProposalRow, granted: Set<string>): Promise<Decision | 
   if (allDupes) {
     return { rule: "duplicate", action: "reject", reason: "auto-triage: verbatim duplicate of active claim(s) -- approval would be a no-op" };
   }
+  pendingSignatures.add(signature);
   return null;
 }
 

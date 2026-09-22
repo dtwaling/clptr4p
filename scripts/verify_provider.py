@@ -122,6 +122,20 @@ def main() -> None:
         fail(f"propose did not queue a proposal: {out}")
     print(f"ok    clptr4p_propose queued ({proposal_id})")
 
+    # The same proposed fact must retain its identifier on retry. Postgres
+    # treats that identifier as idempotent (ON CONFLICT DO NOTHING), so this
+    # prevents a second pending queue row after an uncertain client retry.
+    retry = json.loads(p.handle_tool_call("clptr4p_propose", {
+        "predicate": "x.verify.artifact",
+        "value": "provider verification run",
+        "claim": "the clptr4p provider verification script ran successfully",
+        "rationale": "verify_provider.py artifact; auto-rejected by the script",
+    }))
+    if (not retry.get("success") or retry.get("status") != "pending_validation"
+            or retry.get("proposal_id") != proposal_id):
+        fail(f"retry did not reuse proposal id: {retry}")
+    print("ok    clptr4p_propose retry reused proposal id")
+
     p.shutdown()
 
     # 7. Cleanup: reject our own proposal under the explicit verifier machine

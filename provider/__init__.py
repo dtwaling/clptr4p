@@ -22,6 +22,7 @@ Config (env, resolved from ~/.hermes/.env):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -60,6 +61,15 @@ def _iso_later(seconds: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _proposal_id(subject: str, predicate: str, value: str) -> str:
+    """Return a stable id so retrying one proposed fact is idempotent."""
+    material = json.dumps(
+        {"subject_ref": subject, "predicate": predicate, "value": value},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+    return f"urn:cl:proposal:hermes-{digest}"
 
 
 class _GatewayClient:
@@ -427,7 +437,7 @@ class Clptr4pMemoryProvider(MemoryProvider):
         proposal = {
             "spec_version": "context-layer/0.2-draft",
             "type": "memory_update_proposal",
-            "id": f"urn:cl:proposal:hermes-{uuid.uuid4().hex[:12]}",
+            "id": _proposal_id(subject, predicate, value),
             "created_at": _utcnow(),
             "issuer": {"id": "urn:agent:hermes"},
             "subject_ref": subject,

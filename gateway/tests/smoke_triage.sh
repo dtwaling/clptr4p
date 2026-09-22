@@ -12,8 +12,9 @@
 #   4. human can unpark and reject an unparseable-expiry proposal
 #   5. human review still works on the survivor (review.ts approve)
 #   6. duplicate of the approved claim -> auto-rejected on the next triage run
-#   7. partial duplicate (one new value) survives -- triage is conservative
-#   8. triage never commits claims (count stays at the human-approved 1)
+#   7. duplicate pending proposals collapse to the oldest queue entry
+#   8. partial duplicate (one new value) survives -- triage is conservative
+#   9. triage never commits claims (count stays at the human-approved 1)
 # Requires vault/.env sourced.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -139,14 +140,24 @@ echo "$RUN2" | grep -q "rejected urn:cl:proposal:$RUN_ID-duplicate" || { echo "F
 echo "$RUN2" | grep -q "duplicate of active claim" || { echo "FAIL: duplicate reason missing: $RUN2"; exit 1; }
 echo "  duplicate rejected"
 
-echo "--- 7. Partial duplicate (one new value) survives ---"
+echo "--- 7. Duplicate pending proposals collapse to the oldest entry ---"
+insert_proposal pending-original "$GRANTED_PREDICATE" "pending-v1" "$LATER" ''
+insert_proposal pending-retry    "$GRANTED_PREDICATE" "pending-v1" "$LATER" ''
+RUN3=$(triage 2>&1)
+[ "$(status_of pending-original)" = "pending_validation" ] || { echo "FAIL: oldest pending duplicate was closed: $RUN3"; exit 1; }
+[ "$(status_of pending-retry)" = "rejected" ] || { echo "FAIL: pending retry was not rejected: $RUN3"; exit 1; }
+echo "$RUN3" | grep -q "rejected urn:cl:proposal:$RUN_ID-pending-retry" || { echo "FAIL: pending retry rejection missing: $RUN3"; exit 1; }
+echo "$RUN3" | grep -q "duplicate of an older pending proposal" || { echo "FAIL: pending duplicate reason missing: $RUN3"; exit 1; }
+echo "  pending duplicate collapsed to oldest"
+
+echo "--- 8. Partial duplicate (one new value) survives ---"
 EXTRA='[{"predicate": "terminal.guard", "object": {"value": "partial-dupe-new-value", "datatype": "string"}, "confidence": 0.9}]'
 insert_proposal partial    "$GRANTED_PREDICATE" "smoke-v1" "$LATER" "$EXTRA"
-RUN3=$(triage 2>&1)
-[ "$(status_of partial)" = "pending_validation" ] || { echo "FAIL: partial duplicate closed: $RUN3"; exit 1; }
+RUN4=$(triage 2>&1)
+[ "$(status_of partial)" = "pending_validation" ] || { echo "FAIL: partial duplicate closed: $RUN4"; exit 1; }
 echo "  partial duplicate kept for human"
 
-echo "--- 8. Triage never committed claims ---"
+echo "--- 9. Triage never committed claims ---"
 cat <<SQL | $DENO run --allow-net=127.0.0.1:5433 --allow-env ../vault/psql.ts > /tmp/triage_claims.json
 SELECT count(*) as n FROM claims WHERE subject_ref = '$SUBJECT';
 SQL
@@ -154,11 +165,13 @@ N=$(jq -r '.[0].n' /tmp/triage_claims.json)
 echo "  claims on subject: $N (human-approved only)"
 [ "$N" = "1" ] || { echo "FAIL: expected exactly the 1 human-approved claim"; exit 1; }
 
-echo "--- 9. Digest format: parked proposals are bulk-clearable and idle prints nothing ---"
-# Reject the partial proposal and bulk-clear the parked proposals so the queue
-# is completely clean for the idle-digest assertion.
+echo "--- 10. Digest format: parked proposals are bulk-clearable and idle prints nothing ---"
+# Reject remaining pending proposals and bulk-clear parked ones so the queue is
+# completely clean for the idle-digest assertion.
 REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" VAULT_DEK="$VAULT_DEK" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
   $DENO run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault/capture ../vault/review.ts reject "urn:cl:proposal:$RUN_ID-partial" --reason "smoke cleanup" > /dev/null
+REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" VAULT_DEK="$VAULT_DEK" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
+  $DENO run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault/capture ../vault/review.ts reject "urn:cl:proposal:$RUN_ID-pending-original" --reason "smoke cleanup" > /dev/null
 CLEARED=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" VAULT_DEK="$VAULT_DEK" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
   $DENO run --allow-net=127.0.0.1:5433 --allow-env --allow-read=.,../vault/capture ../vault/review.ts reject-parked --subject "$SUBJECT" --reason "smoke bulk cleanup")
 echo "$CLEARED" | grep -q "cleared 2 parked proposal(s)" || { echo "FAIL: parked bulk clear failed: $CLEARED"; exit 1; }
