@@ -45,6 +45,18 @@ SQL
 : "${PRIOR_POLICY:?no active policy found}"
 trap restore EXIT
 
+echo "--- 0. Reviewer principal is explicit ---"
+MISSING_PRINCIPAL=$(env -u REVIEWER_PRINCIPAL REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" VAULT_DEK="$VAULT_DEK" \
+  deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts list 2>&1) && {
+  echo "FAIL: review.ts accepted an unset reviewer principal"
+  exit 1
+}
+echo "$MISSING_PRINCIPAL" | grep -q "REVIEWER_PRINCIPAL or --reviewer" || {
+  echo "FAIL: review.ts missing-principal error was unclear: $MISSING_PRINCIPAL"
+  exit 1
+}
+echo "  missing reviewer principal rejected"
+
 # Permissive policy for our test predicate.
 POLICY=$(jq -n -c --arg sel "x.verified.handle" '{
   id: "urn:cl:policy:smoke-review", version: "smoke/1", issuer: "urn:cl:policy-engine:local",

@@ -1,9 +1,9 @@
 // Human-driven proposal review CLI. Runs as the least-privilege reviewer role.
 //
-//   deno run review.ts list
-//   deno run review.ts show <proposal-id>
-//   deno run review.ts approve <proposal-id>
-//   deno run review.ts reject <proposal-id> --reason "..."
+//   deno run review.ts list --reviewer <principal>
+//   deno run review.ts show <proposal-id> --reviewer <principal>
+//   deno run review.ts approve <proposal-id> --reviewer <principal>
+//   deno run review.ts reject <proposal-id> --reason "..." --reviewer <principal>
 //
 // Approving mints a source_event recording the decision, commits the proposed
 // claims with provenance to that event, applies add_or_contradict supersede
@@ -16,15 +16,7 @@ import { embedClaimsTx } from "./capture/embed_core.ts";
 
 const dbUrl = Deno.env.get("REVIEWER_DATABASE_URL");
 const dek = Deno.env.get("VAULT_DEK")!;
-const reviewer = Deno.env.get("REVIEWER_PRINCIPAL") ?? "urn:user:reviewer";
-
-if (!dbUrl || !dek) {
-  console.error("REVIEWER_DATABASE_URL and VAULT_DEK are required");
-  Deno.exit(1);
-}
-
 const [cmd, ...rest] = Deno.args;
-const sql = postgres(dbUrl, { onnotice: () => {} });
 
 async function hashId(prefix: string, ...parts: string[]): Promise<string> {
   const msg = new TextEncoder().encode(parts.join("|"));
@@ -34,9 +26,32 @@ async function hashId(prefix: string, ...parts: string[]): Promise<string> {
 }
 
 function usage(): never {
-  console.error("usage: review.ts list | show <id> | approve <id> | reject <id> --reason <text>");
+  console.error("usage: review.ts list | show <id> | approve <id> | reject <id> --reason <text> [--reviewer <principal>]");
   Deno.exit(1);
 }
+
+const reviewerFlagIndex = rest.indexOf("--reviewer");
+const reviewerFromFlag = reviewerFlagIndex >= 0 ? rest[reviewerFlagIndex + 1] ?? usage() : undefined;
+if (reviewerFlagIndex >= 0) rest.splice(reviewerFlagIndex, 2);
+if (rest.includes("--reviewer")) usage();
+
+function requireReviewer(): string {
+  const reviewer = reviewerFromFlag ?? Deno.env.get("REVIEWER_PRINCIPAL");
+  if (!reviewer) {
+    console.error("REVIEWER_PRINCIPAL or --reviewer <principal> is required");
+    usage();
+  }
+  return reviewer;
+}
+
+const reviewer = requireReviewer();
+
+if (!dbUrl || !dek) {
+  console.error("REVIEWER_DATABASE_URL and VAULT_DEK are required");
+  Deno.exit(1);
+}
+
+const sql = postgres(dbUrl, { onnotice: () => {} });
 
 function fail(msg: string): never {
   console.error(`error: ${msg}`);

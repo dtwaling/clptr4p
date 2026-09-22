@@ -19,8 +19,7 @@ Configuration (flags override env vars override defaults):
     --vault-dir    clptr4p vault directory
                    (env CLPTR4P_VAULT_DIR, default <repo>/vault next to this script)
     --deno         deno binary (env CLPTR4P_DENO, default `deno` on PATH)
-    --reviewer     reviewer principal for the cleanup rejection
-                   (env CLPTR4P_REVIEWER, default urn:user:reviewer)
+
 
 Required env (same vars the provider needs, typically from ~/.hermes/.env):
     GATEWAY_DATABASE_URL, VAULT_DEK
@@ -33,11 +32,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 from typing import NoReturn
 
 EXPECTED_PREFETCH_MIN = 1  # at least one claim must be served by prefetch
+VERIFY_PRINCIPAL = "urn:cl:verify"
 
 
 def fail(msg: str) -> NoReturn:
@@ -53,7 +55,6 @@ def main() -> None:
         "vault_dir": os.environ.get("CLPTR4P_VAULT_DIR")
         or os.path.join(os.path.dirname(script_dir), "vault"),
         "deno": os.environ.get("CLPTR4P_DENO") or "deno",
-        "reviewer": os.environ.get("CLPTR4P_REVIEWER") or "urn:user:reviewer",
     }
     parser = argparse.ArgumentParser(description=( __doc__ or "").splitlines()[0])
     parser.add_argument("--hermes-dir", default=defaults["hermes_dir"],
@@ -62,8 +63,6 @@ def main() -> None:
                         help="clptr4p vault directory (review.ts + .env)")
     parser.add_argument("--deno", default=defaults["deno"],
                         help="deno binary path")
-    parser.add_argument("--reviewer", default=defaults["reviewer"],
-                        help="reviewer principal recorded on the cleanup rejection")
     args = parser.parse_args()
 
     for var in ("GATEWAY_DATABASE_URL", "VAULT_DEK"):
@@ -125,17 +124,20 @@ def main() -> None:
 
     p.shutdown()
 
-    # 7. Cleanup: reject our own proposal via review.ts (reviewer role).
-    reviewer_url = ""
+    # 7. Cleanup: reject our own proposal under the explicit verifier machine
+    # principal, then confirm the persisted source event records that actor.
+    database_urls: dict[str, str] = {}
     env_file = os.path.join(args.vault_dir, ".env")
     if os.path.isfile(env_file):
         with open(env_file) as f:
             for line in f:
-                if line.startswith("REVIEWER_DATABASE_URL="):
-                    reviewer_url = line.split("=", 1)[1].strip()
-                    break
-    if not reviewer_url:
+                for name in ("DATABASE_URL", "REVIEWER_DATABASE_URL"):
+                    if line.startswith(f"{name}="):
+                        database_urls[name] = line.split("=", 1)[1].strip()
+    if not database_urls.get("REVIEWER_DATABASE_URL"):
         fail("REVIEWER_DATABASE_URL not found in vault/.env")
+    if not database_urls.get("DATABASE_URL"):
+        fail("DATABASE_URL not found in vault/.env")
     result = subprocess.run(
         [
             args.deno, "run",
@@ -144,13 +146,52 @@ def main() -> None:
             os.path.join(args.vault_dir, "review.ts"),
             "reject", proposal_id, "--reason", "verify_provider.py artifact",
         ],
-        env={**os.environ, "REVIEWER_DATABASE_URL": reviewer_url,
-             "REVIEWER_PRINCIPAL": args.reviewer},
+        env={**os.environ, "REVIEWER_DATABASE_URL": database_urls["REVIEWER_DATABASE_URL"],
+             "REVIEWER_PRINCIPAL": VERIFY_PRINCIPAL},
         cwd=args.vault_dir, capture_output=True, text=True, timeout=60,
     )
     if result.returncode != 0 or "rejected" not in result.stdout:
         fail(f"cleanup reject failed: {result.stdout} {result.stderr}")
-    print("ok    proposal rejected (no residue)")
+    event_match = re.search(r"\(event (urn:cl:event:[0-9a-f]+),", result.stdout)
+    if not event_match:
+        fail(f"cleanup reject did not report an event id: {result.stdout}")
+    sql_path = ""
+    audit: subprocess.CompletedProcess[str] | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".sql", prefix="verify-provider-", dir=args.vault_dir,
+            encoding="utf-8", delete=False,
+        ) as sql_file:
+            sql_path = sql_file.name
+            sql_file.write(
+                "SELECT actor FROM source_events "
+                f"WHERE id = '{event_match.group(1)}';\n"
+            )
+        with open(sql_path, encoding="utf-8") as sql_file:
+            audit = subprocess.run(
+                [
+                    args.deno, "run",
+                    "--allow-net=127.0.0.1:5433", "--allow-env",
+                    f"--allow-read={args.vault_dir}",
+                    os.path.join(args.vault_dir, "psql.ts"),
+                ],
+                env={**os.environ, "DATABASE_URL": database_urls["DATABASE_URL"]},
+                cwd=args.vault_dir, stdin=sql_file, capture_output=True, text=True, timeout=60,
+            )
+    finally:
+        if sql_path:
+            os.unlink(sql_path)
+    if audit is None:
+        fail("cleanup audit did not run")
+    if audit.returncode != 0:
+        fail(f"cleanup audit failed: {audit.stdout} {audit.stderr}")
+    try:
+        actors = json.loads(audit.stdout)
+    except json.JSONDecodeError:
+        fail(f"cleanup audit returned invalid JSON: {audit.stdout}")
+    if actors != [{"actor": VERIFY_PRINCIPAL}]:
+        fail(f"cleanup rejection recorded wrong actor: {actors}")
+    print(f"ok    proposal rejected as {VERIFY_PRINCIPAL} (no residue)")
 
     print("PROVIDER VERIFY OK")
 

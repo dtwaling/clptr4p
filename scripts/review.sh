@@ -6,13 +6,12 @@
 #   scripts/review.sh approve <proposal-id>
 #   scripts/review.sh reject <proposal-id> --reason "text"
 #
-# Sources vault/.env itself; override the reviewer identity via
-# REVIEWER_PRINCIPAL. Run vault/triage.ts first to auto-close the
+# Sources vault/.env itself; set REVIEWER_PRINCIPAL there or pass
+# --reviewer <principal>. Run vault/triage.ts first to auto-close the
 # dead weight (expired / ungranted / duplicate).
 set -euo pipefail
 cd "$(dirname "$0")/../vault"
 set -a; . ./.env; set +a
-export REVIEWER_PRINCIPAL="${REVIEWER_PRINCIPAL:-urn:user:you}"
 DENO="${CLPTR4P_DENO:-$HOME/.deno/bin/deno}"
 exec "$DENO" run --allow-net=127.0.0.1:5433,openrouter.ai \
   --allow-env --allow-read=.,capture,"$HOME"/.hermes/.env review.ts "$@"
