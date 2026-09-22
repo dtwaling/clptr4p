@@ -30,21 +30,108 @@ Exit 0 = all checks passed. Any failure exits 1 with a message.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import uuid
 from typing import NoReturn
 
 EXPECTED_PREFETCH_MIN = 1  # at least one claim must be served by prefetch
 VERIFY_PRINCIPAL = "urn:cl:verify"
+DEFAULT_SUBJECT = "vault://subjects/primary"
+VERIFY_PREFETCH_SELECTORS = "preferred_name"
 
 
 def fail(msg: str) -> NoReturn:
     print(f"FAIL: {msg}")
     sys.exit(1)
+
+
+def load_database_urls(vault_dir: str) -> dict[str, str]:
+    database_urls: dict[str, str] = {}
+    env_file = os.path.join(vault_dir, ".env")
+    if os.path.isfile(env_file):
+        with open(env_file, encoding="utf-8") as f:
+            for line in f:
+                for name in ("DATABASE_URL", "REVIEWER_DATABASE_URL"):
+                    if line.startswith(f"{name}="):
+                        database_urls[name] = line.split("=", 1)[1].strip()
+    for name in ("DATABASE_URL", "REVIEWER_DATABASE_URL"):
+        if not database_urls.get(name):
+            fail(f"{name} not found in vault/.env")
+    return database_urls
+
+
+def sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def run_sql(args: argparse.Namespace, database_url: str, statement: str) -> list[dict[str, object]]:
+    result = subprocess.run(
+        [
+            args.deno, "run",
+            "--allow-net=127.0.0.1:5433", "--allow-env",
+            f"--allow-read={args.vault_dir}",
+            os.path.join(args.vault_dir, "psql.ts"),
+        ],
+        env={**os.environ, "DATABASE_URL": database_url},
+        cwd=args.vault_dir, input=statement, capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        fail(f"SQL verification setup failed: {result.stdout} {result.stderr}")
+    try:
+        rows = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        fail(f"SQL verification setup returned invalid JSON: {result.stdout}")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        fail(f"SQL verification setup returned unexpected rows: {rows}")
+    return rows
+
+
+@contextmanager
+def temporarily_promote_prefetch_claim(
+    args: argparse.Namespace, reviewer_database_url: str, subject: str,
+):
+    rows = run_sql(
+        args,
+        reviewer_database_url,
+        f"""WITH candidate AS (
+             SELECT id, injection_tier
+             FROM claims
+             WHERE subject_ref = {sql_literal(subject)}
+               AND predicate = 'preferred_name'
+               AND injection_tier = 'archive'
+               AND superseded_by IS NULL
+               AND (valid_from IS NULL OR valid_from <= now())
+               AND (valid_to IS NULL OR valid_to > now())
+             ORDER BY created_at ASC, id ASC
+             LIMIT 1
+           )
+           UPDATE claims AS claim
+           SET injection_tier = 'core'
+           FROM candidate
+           WHERE claim.id = candidate.id
+           RETURNING claim.id, candidate.injection_tier AS previous_tier;""",
+    )
+    if len(rows) != 1 or not isinstance(rows[0].get("id"), str) or rows[0].get("previous_tier") != "archive":
+        fail(f"could not promote one archive verify claim for prefetch: {rows}")
+    claim_id = rows[0]["id"]
+    assert isinstance(claim_id, str)
+    try:
+        yield claim_id
+    finally:
+        restored = run_sql(
+            args,
+            reviewer_database_url,
+            "UPDATE claims SET injection_tier = 'archive' "
+            f"WHERE id = {sql_literal(claim_id)} RETURNING id, injection_tier;",
+        )
+        if restored != [{"id": claim_id, "injection_tier": "archive"}]:
+            fail(f"could not restore prefetch claim tier: {restored}")
 
 
 def main() -> None:
@@ -76,6 +163,10 @@ def main() -> None:
     sys.path.insert(0, os.path.abspath(args.hermes_dir))
     from plugins.memory import load_memory_provider  # noqa: E402
 
+    # The live subject may have archive claims for other granted selectors.
+    # Exercise the core-only prefetch path with the fixture predicate alone.
+    os.environ["CLPTR4P_SELECTORS"] = VERIFY_PREFETCH_SELECTORS
+
     # 1. Discovery + availability
     p = load_memory_provider("clptr4p")
     if p is None:
@@ -88,15 +179,25 @@ def main() -> None:
     p.initialize("verify-provider", platform="test")
     print("ok    initialize")
 
-    # 3. Prefetch serves policy-gated claims
-    ctx = p.prefetch("verify provider end-to-end")
-    lines = [l for l in (ctx or "").splitlines() if l.startswith("-")]
-    if len(lines) < EXPECTED_PREFETCH_MIN:
-        fail(f"prefetch served {len(lines)} claims, expected >= {EXPECTED_PREFETCH_MIN}")
-    status = p.recall_status()
-    if status is None or status.count < EXPECTED_PREFETCH_MIN:
-        fail("recall_status missing or wrong count")
-    print(f"ok    prefetch ({status.count} claims)")
+    database_urls = load_database_urls(args.vault_dir)
+    subject = os.environ.get("CLPTR4P_SUBJECT", DEFAULT_SUBJECT)
+
+    # 3. Prefetch serves only human-stamped core claims. The shared verifier
+    # fixture is intentionally archive-tier by default, so promote one claim
+    # only while checking prefetch and restore it even if this check fails.
+    # Budget boundary behavior is covered separately by
+    # scripts/verify_prefetch_budget.py against an isolated fixture.
+    with temporarily_promote_prefetch_claim(
+        args, database_urls["REVIEWER_DATABASE_URL"], subject,
+    ):
+        ctx = p.prefetch("verify provider end-to-end")
+        lines = [l for l in (ctx or "").splitlines() if l.startswith("-")]
+        if len(lines) < EXPECTED_PREFETCH_MIN:
+            fail(f"prefetch served {len(lines)} claims, expected >= {EXPECTED_PREFETCH_MIN}")
+        status = p.recall_status()
+        if status is None or status.count < EXPECTED_PREFETCH_MIN:
+            fail("recall_status missing or wrong count")
+        print(f"ok    prefetch ({status.count} claims)")
 
     # 4. Context tool: granted predicate returns a claim
     out = json.loads(p.handle_tool_call("clptr4p_context", {"predicates": ["preferred_name"]}))
@@ -110,10 +211,13 @@ def main() -> None:
         fail(f"ungranted predicate leaked claims: {out}")
     print("ok    ungranted predicate denied")
 
-    # 6. Propose tool queues a reviewable proposal
+    # 6. Propose tool queues a reviewable proposal. Use a fresh value per
+    # verifier invocation so an earlier rejected fixture cannot be reused;
+    # repeat this exact value below to exercise retry idempotence.
+    verify_value = f"provider verification run {uuid.uuid4().hex}"
     out = json.loads(p.handle_tool_call("clptr4p_propose", {
         "predicate": "x.verify.artifact",
-        "value": "provider verification run",
+        "value": verify_value,
         "claim": "the clptr4p provider verification script ran successfully",
         "rationale": "verify_provider.py artifact; auto-rejected by the script",
     }))
@@ -127,7 +231,7 @@ def main() -> None:
     # prevents a second pending queue row after an uncertain client retry.
     retry = json.loads(p.handle_tool_call("clptr4p_propose", {
         "predicate": "x.verify.artifact",
-        "value": "provider verification run",
+        "value": verify_value,
         "claim": "the clptr4p provider verification script ran successfully",
         "rationale": "verify_provider.py artifact; auto-rejected by the script",
     }))
@@ -140,18 +244,6 @@ def main() -> None:
 
     # 7. Cleanup: reject our own proposal under the explicit verifier machine
     # principal, then confirm the persisted source event records that actor.
-    database_urls: dict[str, str] = {}
-    env_file = os.path.join(args.vault_dir, ".env")
-    if os.path.isfile(env_file):
-        with open(env_file) as f:
-            for line in f:
-                for name in ("DATABASE_URL", "REVIEWER_DATABASE_URL"):
-                    if line.startswith(f"{name}="):
-                        database_urls[name] = line.split("=", 1)[1].strip()
-    if not database_urls.get("REVIEWER_DATABASE_URL"):
-        fail("REVIEWER_DATABASE_URL not found in vault/.env")
-    if not database_urls.get("DATABASE_URL"):
-        fail("DATABASE_URL not found in vault/.env")
     result = subprocess.run(
         [
             args.deno, "run",
