@@ -6,8 +6,8 @@ deployed clptr4p Policy Gateway (Deno, vault-backed Postgres).
   reads  -> gateway context_request (purpose retrieve.context, policy-gated)
   writes -> gateway memory_propose (queued for HUMAN review; never direct)
 
-The builtin memory tool is mirrored the same way: on_memory_write turns each
-committed builtin write into a review proposal -- consent stays with the human.
+Builtin Hermes memory writes remain Hermes-local. Durable vault facts flow only
+through deliberate clptr4p_propose calls, where consent stays with the human.
 
 Config (env, resolved from ~/.hermes/.env):
   GATEWAY_DATABASE_URL   gateway DB connection string (required)
@@ -293,8 +293,7 @@ class Clptr4pMemoryProvider(MemoryProvider):
                   messages: Optional[List[Dict[str, Any]]] = None,
                   turn_author: Optional[Dict[str, Any]] = None) -> None:
         # Deliberate no-op: turns are never auto-written to memory. Writes only
-        # happen through explicit proposals (agent tool or mirrored builtin
-        # memory-tool writes) that the human reviews.
+        # happen through explicit clptr4p_propose calls that the human reviews.
         return None
 
     # -- tools -------------------------------------------------------------
@@ -352,24 +351,6 @@ class Clptr4pMemoryProvider(MemoryProvider):
         except Exception as e:
             logger.error("clptr4p tool %s failed: %s", tool_name, e)
             return tool_error(f"clptr4p tool '{tool_name}' failed: {e}")
-
-    # -- builtin memory mirror ----------------------------------------------
-
-    def on_memory_write(self, action: str, target: str, content: str,
-                        metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Mirror committed builtin memory-tool writes as review proposals."""
-        if action not in ("add", "replace") or not content.strip():
-            return
-        try:
-            result = self._propose(
-                predicate="x.memory.write",
-                value=content.strip()[:2000],
-                claim=f"the built-in memory tool recorded: {content.strip()[:500]}",
-                rationale=f"mirrored builtin memory {action} (target {target}); human review required before it becomes a vault claim",
-            )
-            logger.info("clptr4p mirrored builtin memory write as proposal: %s", result)
-        except Exception as e:
-            logger.warning("clptr4p memory-write mirror failed (non-fatal): %s", e)
 
     def shutdown(self) -> None:
         self._client.close()
