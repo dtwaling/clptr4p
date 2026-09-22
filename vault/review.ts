@@ -84,6 +84,112 @@ interface ProposalRow {
   proposed_tier: InjectionTier;
 }
 
+interface ActiveClaimRow {
+  id: string;
+  predicate: string;
+  claim: string;
+  value: unknown;
+  injection_tier: InjectionTier;
+}
+
+const PREFETCH_HEADER = "Approved user context (clptr4p vault, reviewed core claims):";
+const DEFAULT_PREFETCH_MAX_CHARS = 11000;
+
+function prefetchMaxChars(): number {
+  const raw = Deno.env.get("CLPTR4P_PREFETCH_MAX_CHARS") ?? String(DEFAULT_PREFETCH_MAX_CHARS);
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_PREFETCH_MAX_CHARS;
+}
+
+function valuePreview(value: unknown, limit = 60): string {
+  const rendered = JSON.stringify(value);
+  return rendered.length > limit ? `${rendered.slice(0, limit)}...` : rendered;
+}
+
+function prefetchLineChars(claim: Pick<ActiveClaimRow, "claim" | "predicate" | "value">): number {
+  return `- ${claim.claim} [${claim.predicate} = ${claim.value}]`.length;
+}
+
+async function activeClaimsFor(p: ProposalRow): Promise<ActiveClaimRow[]> {
+  const predicates = [...new Set((p.proposal_json.proposed_claims ?? []).map((c) => c.predicate))];
+  if (predicates.length === 0) return [];
+  return await sql<ActiveClaimRow[]>`
+    SELECT id, predicate, claim, value, injection_tier
+    FROM claims
+    WHERE subject_ref = ${p.subject_ref}
+      AND predicate = ANY(${predicates})
+      AND superseded_by IS NULL
+      AND (valid_from IS NULL OR valid_from <= now())
+      AND (valid_to IS NULL OR valid_to > now())
+    ORDER BY created_at ASC, id ASC`;
+}
+
+async function activeCoreClaims(subjectRef: string): Promise<ActiveClaimRow[]> {
+  return await sql<ActiveClaimRow[]>`
+    SELECT id, predicate, claim, value, injection_tier
+    FROM claims
+    WHERE subject_ref = ${subjectRef}
+      AND injection_tier = 'core'
+      AND superseded_by IS NULL
+      AND (valid_from IS NULL OR valid_from <= now())
+      AND (valid_to IS NULL OR valid_to > now())
+    ORDER BY created_at ASC, id ASC`;
+}
+
+async function printReviewPreview(p: ProposalRow): Promise<void> {
+  const proposedClaims = p.proposal_json.proposed_claims ?? [];
+  const active = await activeClaimsFor(p);
+  const activeByPredicate = new Map<string, ActiveClaimRow[]>();
+  for (const claim of active) {
+    const matches = activeByPredicate.get(claim.predicate) ?? [];
+    matches.push(claim);
+    activeByPredicate.set(claim.predicate, matches);
+  }
+
+  console.log("  supersede preview:");
+  for (const proposed of proposedClaims) {
+    const matches = activeByPredicate.get(proposed.predicate) ?? [];
+    if (matches.length === 0) {
+      console.log(`    ${proposed.predicate}: new predicate, no conflict`);
+      continue;
+    }
+    for (const current of matches) {
+      console.log(`    ${proposed.predicate}: replaces: ${current.predicate} (current value: ${valuePreview(current.value)})`);
+    }
+  }
+
+  // Approval is the only tier-stamping action. This is a read-only preview of
+  // what choosing --tier core would cost before the reviewer makes that choice.
+  const core = await activeCoreClaims(p.subject_ref);
+  const replacementIds = new Set(
+    p.proposal_json.operation === "add_or_contradict"
+      ? active.filter((claim) => claim.injection_tier === "core").map((claim) => claim.id)
+      : [],
+  );
+  const prospective = proposedClaims.map((claim) => ({
+    claim: `reviewer-approved proposal asserts ${claim.predicate} is ${JSON.stringify(claim.object.value)}`,
+    predicate: claim.predicate,
+    value: claim.object.value,
+  }));
+  const currentChars = PREFETCH_HEADER.length + core.reduce((total, claim) => total + 1 + prefetchLineChars(claim), 0);
+  const grossChars = currentChars + prospective.reduce((total, claim) => total + 1 + prefetchLineChars(claim), 0);
+  const demotionChars = core.filter((claim) => replacementIds.has(claim.id))
+    .reduce((total, claim) => total + 1 + prefetchLineChars(claim), 0);
+  const maxChars = prefetchMaxChars();
+  if (grossChars > maxChars) {
+    console.log(`  core approval budget (if --tier core): gross ${grossChars}/${maxChars} chars; net after replacements ${grossChars - demotionChars}/${maxChars} chars`);
+    const demotions = core.filter((claim) => replacementIds.has(claim.id));
+    if (demotions.length === 0) {
+      console.log("    demotion candidates: none");
+    } else {
+      console.log("    demotion candidates:");
+      for (const claim of demotions) {
+        console.log(`      ${claim.predicate}: ${prefetchLineChars(claim)} chars (current value: ${valuePreview(claim.value)})`);
+      }
+    }
+  }
+}
+
 async function loadProposal(id: string): Promise<ProposalRow | undefined> {
   const [row] = await sql<ProposalRow[]>`
     SELECT id, subject_ref, status, proposal_json, created_at, reviewed_at, reviewer, proposed_tier
@@ -121,6 +227,7 @@ async function listPending(): Promise<void> {
     console.log(`  claims:   ${claims}`);
     console.log(`  by:       ${p.proposal_json.submitted_by ?? "?"}  expires: ${p.proposal_json.expires_at ?? "?"}`);
     console.log(`  why:      ${p.proposal_json.rationale ?? "(no rationale)"}`);
+    await printReviewPreview(p);
     console.log();
   }
 }
@@ -130,6 +237,7 @@ async function show(id: string): Promise<void> {
   if (!p) fail(`proposal ${id} not found`);
   console.log(JSON.stringify(p.proposal_json, null, 2));
   console.log(`-- status: ${p.status}  tier: ${p.proposed_tier}  reviewed_at: ${p.reviewed_at ?? "-"}  reviewer: ${p.reviewer ?? "-"}`);
+  await printReviewPreview(p);
 }
 
 async function commit(id: string, action: "committed" | "rejected", reason?: string, tier: InjectionTier = "archive"): Promise<void> {

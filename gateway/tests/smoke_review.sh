@@ -102,6 +102,7 @@ LIST=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:us
   deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts list)
 echo "$LIST" | grep -q "$RUN_ID-hermes" || { echo "FAIL: list does not show proposal"; echo "$LIST"; exit 1; }
 echo "$LIST" | grep -q "x.verified.handle=.*hermes" || { echo "FAIL: list missing claim"; echo "$LIST"; exit 1; }
+echo "$LIST" | grep -q "new predicate, no conflict" || { echo "FAIL: list missing no-conflict preview"; echo "$LIST"; exit 1; }
 echo "  listed ok"
 
 echo "--- 3. Reviewer approves ---"
@@ -135,6 +136,15 @@ echo "  rejected: $DBL"
 echo "--- 6. Contradicting proposal supersedes ---"
 OUT=$(call_gateway memory_propose "{\"proposal\":$(propose claptrap)}")
 echo "$OUT" | grep -q pending_validation || { echo "FAIL: propose 2"; exit 1; }
+LIST2=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
+  deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts list)
+echo "$LIST2" | grep -q 'replaces: x.verified.handle (current value: "hermes")' || { echo "FAIL: list supersede preview missing"; echo "$LIST2"; exit 1; }
+PREVIEW=$(CLPTR4P_PREFETCH_MAX_CHARS=1 REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
+  deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts show "urn:cl:proposal:$RUN_ID-claptrap")
+echo "$PREVIEW" | grep -q 'replaces: x.verified.handle (current value: "hermes")' || { echo "FAIL: supersede preview missing"; echo "$PREVIEW"; exit 1; }
+echo "$PREVIEW" | grep -q "demotion candidates:" || { echo "FAIL: core budget demotion preview missing"; echo "$PREVIEW"; exit 1; }
+echo "$PREVIEW" | grep -q "x.verified.handle: .* chars" || { echo "FAIL: core budget demotion size missing"; echo "$PREVIEW"; exit 1; }
+echo "  supersede and core-budget preview ok"
 APP2=$(REVIEWER_DATABASE_URL="$REVIEWER_DATABASE_URL" REVIEWER_PRINCIPAL="urn:user:dtdubs" \
   deno run --allow-net=127.0.0.1:5433,openrouter.ai --allow-env --allow-read=.,../vault/capture ../vault/review.ts approve "urn:cl:proposal:$RUN_ID-claptrap")
 echo "$APP2" | grep -q "committed" || { echo "FAIL: approve 2"; exit 1; }
