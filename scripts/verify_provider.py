@@ -104,7 +104,6 @@ def temporarily_promote_prefetch_claim(
              FROM claims
              WHERE subject_ref = {sql_literal(subject)}
                AND predicate = 'preferred_name'
-               AND injection_tier = 'archive'
                AND superseded_by IS NULL
                AND (valid_from IS NULL OR valid_from <= now())
                AND (valid_to IS NULL OR valid_to > now())
@@ -117,21 +116,23 @@ def temporarily_promote_prefetch_claim(
            WHERE claim.id = candidate.id
            RETURNING claim.id, candidate.injection_tier AS previous_tier;""",
     )
-    if len(rows) != 1 or not isinstance(rows[0].get("id"), str) or rows[0].get("previous_tier") != "archive":
+    if len(rows) != 1 or not isinstance(rows[0].get("id"), str):
         fail(f"could not promote one archive verify claim for prefetch: {rows}")
     claim_id = rows[0]["id"]
+    previous_tier = rows[0].get("previous_tier")
     assert isinstance(claim_id, str)
     try:
         yield claim_id
     finally:
-        restored = run_sql(
-            args,
-            reviewer_database_url,
-            "UPDATE claims SET injection_tier = 'archive' "
-            f"WHERE id = {sql_literal(claim_id)} RETURNING id, injection_tier;",
-        )
-        if restored != [{"id": claim_id, "injection_tier": "archive"}]:
-            fail(f"could not restore prefetch claim tier: {restored}")
+        if previous_tier == 'archive':
+            restored = run_sql(
+                args,
+                reviewer_database_url,
+                "UPDATE claims SET injection_tier = 'archive' "
+                f"WHERE id = {sql_literal(claim_id)} RETURNING id, injection_tier;",
+            )
+            if restored != [{"id": claim_id, "injection_tier": "archive"}]:
+                fail(f"could not restore prefetch claim tier: {restored}")
 
 
 def main() -> None:
