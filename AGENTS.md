@@ -46,20 +46,35 @@ agent -> memory_propose  -> human review -> approved claims (or nothing)
     `ingest.ts` (deterministic ids -> idempotent re-ingest), shared embed core.
   - `review.ts` -- human review CLI. Approve = encrypted decision event +
     claims + provenance + inline embedding, one txn. Reject = decision event
-    only, zero claims.
-  - `triage.ts` -- auto-triage for the review queue. REJECT-ONLY (rejection
-    commits zero claims, so it can never bypass the human gate). Rules:
-    expired / empty / ungranted predicate / verbatim duplicate. Digest mode
-    is silent on an idle queue; `scripts/triage_digest.sh` is the cron entry
-    point, `scripts/review.sh` the human wrapper.
+    only, zero claims. An explicit reviewer principal is required through
+    `REVIEWER_PRINCIPAL` or `--reviewer`; it never defaults to a human identity.
+    `list` and `show` include parked rows, supersede previews, and read-only
+    core-budget replacement accounting. Approve with `--tier core|archive`
+    stamps each committed claim's human-selected injection tier; `unpark` is
+    the only route from parked to reviewable.
+  - `triage.ts` -- auto-triage for the review queue. Expired, unparseable
+    expiry, and ungranted-predicate proposals are **parked**: they write zero
+    claims, are excluded from later digests, stay visible in review, and can
+    re-enter review only through human `unpark`. Empty, malformed, and
+    verbatim-duplicate proposals are terminally rejected; rejection mints a
+    decision event but commits zero claims. This is the zero-trust invariant:
+    auto-triage never approves or commits a claim. `scripts/triage_digest.sh`
+    is the cron entry point and `scripts/review.sh` is the human wrapper;
+    `reject-parked [--subject <ref>]` provides scoped terminal cleanup.
   - `verify_rbac.ts` -- live privilege-boundary test for all roles. Run it
     after touching any grant.
   - `embed.ts` / `search.ts` -- backfill CLI / admin similarity search. Agents
     never query vectors; they go by predicate under policy.
 - `provider/` -- Hermes MemoryProvider plugin (thin MCP stdio client).
-  `sync_turn` is deliberately a no-op: turns are never auto-written to memory.
+  Builtin Hermes memory stays local: durable vault writes happen only through
+  deliberate `clptr4p_propose` calls and human approval. `sync_turn` is
+  deliberately a no-op: turns are never auto-written to memory. Prefetch
+  requests only human-stamped `core` claims and applies the fail-soft
+  `CLPTR4P_PREFETCH_MAX_CHARS` character budget (default 11000); explicit
+  policy-gated context requests may retrieve archive claims.
 - `scripts/` -- repo-filed ops scripts (provider E2E, Honcho export). All rig
-  specifics are flags/env, no hardcodes.
+  specifics are flags/env, no hardcodes. `backfill_injection_tiers.ts` is the
+  one-time interactive human classifier for existing active claims.
 - `docs/architecture.md` -- detailed design notes.
 
 ## Environment
@@ -72,8 +87,12 @@ agent -> memory_propose  -> human review -> approved claims (or nothing)
   clptr4p credential.
 - The live Hermes integration: MCP server entry in `~/.hermes/config.yaml`
   (env passthrough `GATEWAY_DATABASE_URL`, `VAULT_DEK`), provider installed at
-  `~/.hermes/plugins/clptr4p/` (keep it in sync with `provider/__init__.py`),
-  active memory provider is clptr4p.
+  `~/.hermes/plugins/clptr4p/` and the configured profile plugin homes (keep
+  all copies in sync with `provider/__init__.py`), active memory provider is
+  clptr4p.
+- One digest watchdog is registered in the default profile: cron
+  `9b6df582187f`, Telegram delivery, daily at 9am EDT. Do not create another
+  profile-level digest cron.
 
 ## Verification before "done"
 
@@ -83,18 +102,16 @@ Run the suite from `gateway/` (with `vault/.env` sourced):
 deno task check && deno task test
 deno run --allow-net=127.0.0.1:5433 --allow-env ../vault/verify_rbac.ts
 bash tests/smoke.sh && bash tests/smoke_pg.sh
-bash tests/smoke_capture.sh && bash tests/smoke_review.sh
+bash tests/smoke_capture.sh && bash tests/smoke_review.sh && bash tests/smoke_triage.sh
 bash tests/check_policy.sh
 ```
 
-Then confirm no residue and the right active policy:
+Then confirm no residue and the right active policy with a repo-filed SQL
+query via `vault/psql.ts`; do not use an inline pipe-to-interpreter command.
 
-```
-echo "SELECT id FROM policies WHERE active;" | ...psql.ts
-```
-
-After provider changes also run `scripts/verify_provider.py` and re-sync the
-installed copy at `~/.hermes/plugins/clptr4p/`.
+After provider changes also run `uv run --script scripts/verify_provider.py`.
+Its cleanup must run as `urn:cl:verify`; re-sync every installed plugin copy
+and verify byte-identical source hashes.
 
 ## Commit style
 
