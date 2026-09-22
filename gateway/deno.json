@@ -7,6 +7,7 @@
     "smoke:pg": "bash tests/smoke_pg.sh",
     "smoke:capture": "bash tests/smoke_capture.sh",
     "smoke:review": "bash tests/smoke_review.sh",
+    "smoke:curator": "bash tests/smoke_curator_prepass.sh",
     "smoke:prefetch": "bash tests/smoke_prefetch.sh",
     "check:policy": "bash tests/check_policy.sh"
   }

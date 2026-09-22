@@ -1,12 +1,13 @@
-// Verifies the privilege boundaries for both gateway and capture roles.
-// Run with GATEWAY_DATABASE_URL and CAPTURE_DATABASE_URL in env.
+// Verifies the privilege boundaries for gateway, capture, reviewer, and curator roles.
+// Run with the role DATABASE_URL values in env.
 
 import postgres from "npm:postgres@3.4.5";
 
 const gatewayUrl = Deno.env.get("GATEWAY_DATABASE_URL");
 const captureUrl = Deno.env.get("CAPTURE_DATABASE_URL");
-if (!gatewayUrl || !captureUrl) {
-  console.error("GATEWAY_DATABASE_URL and CAPTURE_DATABASE_URL required");
+const curatorUrl = Deno.env.get("CURATOR_DATABASE_URL");
+if (!gatewayUrl || !captureUrl || !curatorUrl) {
+  console.error("GATEWAY_DATABASE_URL, CAPTURE_DATABASE_URL, and CURATOR_DATABASE_URL required");
   Deno.exit(1);
 }
 
@@ -72,7 +73,7 @@ async function testCaptureRole() {
   try {
     await expectAllowed("capture: select source_events", () => sql`SELECT count(*) FROM source_events`);
     await expectAllowed("capture: select claims", () => sql`SELECT count(*) FROM claims`);
-    await expectAllowed("capture: insert source_events", () => 
+    await expectAllowed("capture: insert source_events", () =>
       sql`INSERT INTO source_events (id, subject_ref, origin, actor, occurred_at, visibility, payload_digest)
           VALUES ('test_event', 's', 'o', 'a', now(), 'v', 'd') ON CONFLICT DO NOTHING`);
     await expectAllowed("capture: insert claims", () =>
@@ -80,15 +81,13 @@ async function testCaptureRole() {
           VALUES ('test_claim', 's', 'p', 'c', '{}'::jsonb, 0.5) ON CONFLICT DO NOTHING`);
     await expectAllowed("capture: update claims.superseded_by", () =>
       sql`UPDATE claims SET superseded_by = 'test_claim' WHERE id = 'test_claim'`);
-    
     await expectDenied("capture: select policies", () => sql`SELECT count(*) FROM policies`);
     await expectDenied("capture: select decisions", () => sql`SELECT count(*) FROM decisions`);
     await expectDenied("capture: select bundles", () => sql`SELECT count(*) FROM bundles`);
     await expectDenied("capture: select receipts", () => sql`SELECT count(*) FROM receipts`);
-    await expectDenied("capture: insert decisions", () => 
+    await expectDenied("capture: insert decisions", () =>
       sql`INSERT INTO decisions (id, request_ref, decision, reason_codes, decision_json) VALUES ('x','r','d','{}','{}')`);
   } finally {
-    // Cleanup test data
     const adminUrl = Deno.env.get("DATABASE_URL");
     if (adminUrl) {
       const adminSql = postgres(adminUrl, { onnotice: () => {} });
@@ -137,9 +136,30 @@ async function testReviewerRole() {
   }
 }
 
+async function testCuratorRole() {
+  console.log("--- Testing Curator Role ---");
+  const sql = postgres(curatorUrl!, { onnotice: () => {} });
+  try {
+    await expectAllowed("curator: select proposals", () => sql`SELECT count(*) FROM proposals`);
+    await expectAllowed("curator: update proposals.proposal_json", () =>
+      sql`UPDATE proposals SET proposal_json = proposal_json WHERE false`);
+    await expectDenied("curator: insert claims", () =>
+      sql`INSERT INTO claims (id, subject_ref, predicate, claim, value, confidence)
+          VALUES ('curator_test_claim', 's', 'p', 'c', '{}'::jsonb, 0.5)`);
+    await expectDenied("curator: update proposals.status", () =>
+      sql`UPDATE proposals SET status = status WHERE false`);
+    await expectDenied("curator: update claims", () =>
+      sql`UPDATE claims SET injection_tier = injection_tier WHERE false`);
+    await expectDenied("curator: delete claims", () => sql`DELETE FROM claims WHERE false`);
+  } finally {
+    await sql.end();
+  }
+}
+
 await testGatewayRole();
 await testCaptureRole();
 await testReviewerRole();
+await testCuratorRole();
 
 if (failures > 0) {
   console.error(`${failures} boundary violation(s)`);

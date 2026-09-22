@@ -77,6 +77,12 @@ interface ProposalRow {
     rationale?: string;
     expires_at?: string;
     submitted_by?: string;
+    curator_notes?: {
+      recommended_tier: InjectionTier;
+      replaces_claims: string[];
+      net_budget_impact: number;
+      demotion_candidates: string[];
+    };
   };
   created_at: Date;
   reviewed_at: Date | null;
@@ -108,6 +114,14 @@ function valuePreview(value: unknown, limit = 60): string {
 
 function prefetchLineChars(claim: Pick<ActiveClaimRow, "claim" | "predicate" | "value">): number {
   return `- ${claim.claim} [${claim.predicate} = ${claim.value}]`.length;
+}
+
+function printCuratorNotes(p: ProposalRow): void {
+  const notes = p.proposal_json.curator_notes;
+  if (!notes) return;
+  console.log(`  curator advisory: recommended tier ${notes.recommended_tier}; net budget impact ${notes.net_budget_impact} chars`);
+  console.log(`    replaces: ${notes.replaces_claims.length ? notes.replaces_claims.join(", ") : "none"}`);
+  console.log(`    demotion candidates: ${notes.demotion_candidates.length ? notes.demotion_candidates.join(", ") : "none"}`);
 }
 
 async function activeClaimsFor(p: ProposalRow): Promise<ActiveClaimRow[]> {
@@ -227,6 +241,7 @@ async function listPending(): Promise<void> {
     console.log(`  claims:   ${claims}`);
     console.log(`  by:       ${p.proposal_json.submitted_by ?? "?"}  expires: ${p.proposal_json.expires_at ?? "?"}`);
     console.log(`  why:      ${p.proposal_json.rationale ?? "(no rationale)"}`);
+    printCuratorNotes(p);
     await printReviewPreview(p);
     console.log();
   }
@@ -237,6 +252,7 @@ async function show(id: string): Promise<void> {
   if (!p) fail(`proposal ${id} not found`);
   console.log(JSON.stringify(p.proposal_json, null, 2));
   console.log(`-- status: ${p.status}  tier: ${p.proposed_tier}  reviewed_at: ${p.reviewed_at ?? "-"}  reviewer: ${p.reviewer ?? "-"}`);
+  printCuratorNotes(p);
   await printReviewPreview(p);
 }
 

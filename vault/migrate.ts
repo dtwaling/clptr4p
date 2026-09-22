@@ -8,8 +8,9 @@ const dbUrl = Deno.env.get("DATABASE_URL");
 const gatewayPassword = Deno.env.get("GATEWAY_PASSWORD");
 const capturePassword = Deno.env.get("CAPTURE_PASSWORD");
 const reviewerPassword = Deno.env.get("REVIEWER_PASSWORD");
-if (!dbUrl || !gatewayPassword || !capturePassword || !reviewerPassword) {
-  console.error("DATABASE_URL, GATEWAY_PASSWORD, CAPTURE_PASSWORD, and REVIEWER_PASSWORD are required");
+const curatorPassword = Deno.env.get("CURATOR_PASSWORD");
+if (!dbUrl || !gatewayPassword || !capturePassword || !reviewerPassword || !curatorPassword) {
+  console.error("DATABASE_URL, GATEWAY_PASSWORD, CAPTURE_PASSWORD, REVIEWER_PASSWORD, and CURATOR_PASSWORD are required");
   Deno.exit(1);
 }
 
@@ -41,6 +42,13 @@ try {
     const escaped = reviewerPassword.replaceAll("'", "''");
     await sql.unsafe(`CREATE ROLE clptr4p_reviewer WITH LOGIN PASSWORD '${escaped}'`);
     console.log("created role clptr4p_reviewer");
+  }
+
+  const [curatorRole] = await sql`SELECT 1 FROM pg_roles WHERE rolname = 'clptr4p_curator'`;
+  if (!curatorRole) {
+    const escaped = curatorPassword.replaceAll("'", "''");
+    await sql.unsafe(`CREATE ROLE clptr4p_curator WITH LOGIN PASSWORD '${escaped}'`);
+    console.log("created role clptr4p_curator");
   }
 
   const files = [...Deno.readDirSync(migrationsDir)]

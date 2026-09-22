@@ -6,8 +6,10 @@
 # no_agent cron job delivers nothing on quiet days. Approval stays human-only;
 # expiry and ungranted proposals are parked for later human action.
 set -euo pipefail
-cd "$(dirname "$0")/../vault"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/../vault"
 set -a; . ./.env; set +a
 DENO="${CLPTR4P_DENO:-$HOME/.deno/bin/deno}"
+"$SCRIPT_DIR/curator_prepass.sh"
 exec "$DENO" run --allow-net=127.0.0.1:5433 \
   --allow-env --allow-read=.,capture triage.ts --format digest

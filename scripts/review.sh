@@ -12,8 +12,10 @@
 # --reviewer <principal>. Run vault/triage.ts first to park expired or
 # ungranted proposals and terminal-reject empty, malformed, or duplicate ones.
 set -euo pipefail
-cd "$(dirname "$0")/../vault"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/../vault"
 set -a; . ./.env; set +a
 DENO="${CLPTR4P_DENO:-$HOME/.deno/bin/deno}"
+"$SCRIPT_DIR/curator_prepass.sh"
 exec "$DENO" run --allow-net=127.0.0.1:5433,openrouter.ai \
   --allow-env --allow-read=.,capture,"$HOME"/.hermes/.env review.ts "$@"
